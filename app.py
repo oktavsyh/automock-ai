@@ -87,6 +87,8 @@ status_list = ["200 OK", "201 Created", "400 Bad Request", "401 Unauthorized", "
 # ==========================================
 # DETEKSI AKSI MANUAL (CTRL + ENTER) PADA MASTER JSON
 # ==========================================
+is_json_valid = True  # Flag global untuk status validitas JSON
+
 if st.session_state.master_json_input != st.session_state.last_parsed_master:
     val = st.session_state.master_json_input
     if val.strip():
@@ -113,8 +115,9 @@ if st.session_state.master_json_input != st.session_state.last_parsed_master:
                 st.session_state.fixed_delay = int(res["fixedDelayMilliseconds"])
                 
             st.session_state.last_parsed_master = val
-        except:
-            pass
+            is_json_valid = True
+        except json.JSONDecodeError:
+            is_json_valid = False
 
 # ==========================================
 # FUNGSI KOMPILASI AKHIR (SMART TEMPLATE PLACEHOLDER & STRICT ORDERING)
@@ -122,8 +125,9 @@ if st.session_state.master_json_input != st.session_state.last_parsed_master:
 def compile_final_json():
     try:
         base = json.loads(st.session_state.master_json_input) if st.session_state.master_json_input.strip() else {}
-    except:
-        base = {}
+    except json.JSONDecodeError:
+        # Jika error, kembalikan dict berisi pesan error agar Live Preview tidak ngaco
+        return {"error": "⚠️ Format Master JSON tidak valid. Silakan perbaiki sintaks JSON di atas."}
 
     if base and "request" not in base and "response" not in base:
         base = {"request": {}, "response": {"jsonBody": base}}
@@ -151,7 +155,6 @@ def compile_final_json():
         k = row.get('key', '').strip()
         if not k: continue
 
-        # AMBIL NAMA PARAMETER PALING UJUNG UNTUK TEMPLATE PLACEHOLDER
         leaf_key = k.split('.')[-1]
         placeholder_value = f"{{{leaf_key}}}"
 
@@ -169,7 +172,7 @@ def compile_final_json():
             else:
                 set_nested_value(base["response"][body_key], k, placeholder_value)
 
-    # Membangun Urutan Kaku Sesuai Aturan Perusahaan
+    # Membangun Urutan Kaku
     ordered_json = {"request": {}, "response": {}}
     ordered_json["request"]["url"] = base["request"]["url"]
     ordered_json["request"]["method"] = base["request"]["method"]
@@ -201,7 +204,7 @@ st.text_area(
 )
 filename_template = st.text_input("Pola Nama File:", placeholder="Contoh: mock_response_[code].json", value="mock_response_[code].json")
 
-# EKSTRAKSI SEMUA KUNCI (Mendukung jsonBody & headers)
+# EKSTRAKSI SEMUA KUNCI & PENANGANAN ERROR JSON
 parsed_root = {}
 available_keys = []
 if st.session_state.master_json_input.strip():
@@ -217,8 +220,11 @@ if st.session_state.master_json_input.strip():
         if isinstance(headers_node, dict):
             headers_keys = get_all_keys(headers_node)
             available_keys.extend([f"headers.{hk}" for hk in headers_keys])
-    except:
-        pass
+            
+        is_json_valid = True
+    except json.JSONDecodeError as e:
+        is_json_valid = False
+        st.error(f"⚠️ Terjadi kesalahan format pada Master JSON. Detail: {e}")
 
 st.divider()
 
@@ -242,14 +248,21 @@ with col_left:
 with col_right:
     st.subheader("👁️ Live Preview Hasil")
     compiled_preview = compile_final_json()
-    st.json(compiled_preview)
+    # Jika json tidak valid, tampilkan dengan tema error di preview
+    if "error" in compiled_preview:
+        st.warning(compiled_preview["error"])
+    else:
+        st.json(compiled_preview)
 
 # Fungsi Callback Anti StreamlitAPIException
 def sync_form_to_master():
-    st.session_state.master_json_input = json.dumps(compile_final_json(), indent=2)
-    st.session_state.last_parsed_master = st.session_state.master_json_input
+    if is_json_valid:
+        st.session_state.master_json_input = json.dumps(compile_final_json(), indent=2)
+        st.session_state.last_parsed_master = st.session_state.master_json_input
+    else:
+        pass # Cegah sinkronisasi kalau JSON lagi error
 
-st.button("💾 Sinkronisasikan Form ke Template Master", use_container_width=True, on_click=sync_form_to_master)
+st.button("💾 Sinkronisasikan Form ke Template Master", use_container_width=True, on_click=sync_form_to_master, disabled=not is_json_valid)
 
 # ==========================================
 # BAGIAN 3: MANIPULASI PARAMETER VARIASI (FULL WIDTH)
@@ -298,9 +311,11 @@ if st.button("➕ Tambah Variasi Parameter"):
 # ==========================================
 st.divider()
 
-if st.button("🚀 GENERATE MULTIPLE FILES (.ZIP)", type="primary", use_container_width=True):
+if st.button("🚀 GENERATE MULTIPLE FILES (.ZIP)", type="primary", use_container_width=True, disabled=not is_json_valid):
     if not st.session_state.master_json_input.strip():
         st.error("⚠️ Template JSON Utama tidak boleh kosong!")
+    elif not is_json_valid:
+        st.error("⚠️ Perbaiki dulu format Master JSON Anda sebelum melakukan Generate!")
     else:
         with st.spinner("⏳ AutoMock.ai sedang menyusun struktur variasi file mock..."):
             variations_text = ""
