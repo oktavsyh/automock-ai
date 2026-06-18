@@ -35,11 +35,11 @@ st.set_page_config(page_title="AutoMock.ai | Builder", layout="wide", page_icon=
 st.markdown("""
     <style>
     .header-style { background: linear-gradient(90deg, #4F46E5, #9333EA); padding: 20px; border-radius: 10px; color: white; margin-bottom: 20px; }
-    .st-emotion-cache-1v0mbdj { margin-top: 25px; } /* Menyesuaikan posisi tombol delete agar sejajar */
+    .st-emotion-cache-1v0mbdj { margin-top: 25px; } 
     </style>
     <div class="header-style">
         <h1>🤖 AutoMock.ai Builder</h1>
-        <p>Enterprise Mock JSON Generator | Crafted by Oktaviansyah and Designed by Albert Shanta 🚀</p>
+        <p>Enterprise Mock JSON Generator | Crafted by Oktaviansyah 🚀</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -49,7 +49,6 @@ except KeyError:
     st.error("Konfigurasi API Key tidak ditemukan di secrets.toml.")
     st.stop()
 
-# Inisialisasi State untuk baris parameter dinamis
 if 'rows' not in st.session_state:
     st.session_state.rows = [{'id': 0, 'action': 'ADD NEW', 'key': '', 'value': ''}]
 if 'row_counter' not in st.session_state:
@@ -63,18 +62,61 @@ def remove_row(index):
     st.session_state.rows.pop(index)
 
 # ==========================================
-# BAGIAN 1: TEMPLATE & POLA NAMA
+# BAGIAN 1: TEMPLATE & POLA NAMA (DENGAN AUTO-FILL LOGIC)
 # ==========================================
 st.subheader("1. Konfigurasi Master")
-base_template = st.text_area("Template Master JSON (Body):", height=150, placeholder='{"data": "sample"}')
+base_template = st.text_area("Template Master JSON (WireMock Format / Body):", height=150, placeholder='{"request": {...}, "response": {...}}')
 filename_template = st.text_input("Pola Nama File:", placeholder="Contoh: mock_response_[code].json")
 
 parsed_json = {}
 available_keys = []
+
+# Variabel Default untuk Auto-Fill UI
+def_url = "/api/v1/test"
+def_method_idx = 0
+def_status_idx = 0
+def_delay = 0
+def_matched = ""
+
+method_list = ["GET", "POST", "PUT", "DELETE", "PATCH"]
+status_list = ["200 OK", "201 Created", "400 Bad Request", "401 Unauthorized", "403 Forbidden", "404 Not Found", "500 Internal Server Error"]
+
 if base_template:
     try:
         parsed_json = json.loads(base_template)
         available_keys = get_all_keys(parsed_json)
+        
+        # --- LOGIKA AUTO-DETECT DARI MASTER JSON ---
+        req = parsed_json.get("request", {})
+        res = parsed_json.get("response", {})
+        
+        if isinstance(req, dict):
+            # Cek URL
+            if "url" in req: def_url = req["url"]
+            elif "urlPath" in req: def_url = req["urlPath"]
+            elif "urlPattern" in req: def_url = req["urlPattern"]
+            
+            # Cek Method
+            if "method" in req and req["method"].upper() in method_list:
+                def_method_idx = method_list.index(req["method"].upper())
+                
+            # Cek Matched JSON Path
+            body_patterns = req.get("bodyPatterns", [])
+            if body_patterns and isinstance(body_patterns, list) and "matchesJsonPath" in body_patterns[0]:
+                def_matched = body_patterns[0]["matchesJsonPath"]
+                
+        if isinstance(res, dict):
+            # Cek Status Code
+            if "status" in res:
+                status_str = str(res["status"])
+                for idx, s in enumerate(status_list):
+                    if s.startswith(status_str):
+                        def_status_idx = idx
+                        break
+            # Cek Fixed Delay
+            if "fixedDelayMilliseconds" in res:
+                def_delay = int(res["fixedDelayMilliseconds"])
+                
     except json.JSONDecodeError:
         st.error("⚠️ Format JSON master tidak valid!")
 
@@ -88,29 +130,26 @@ col_left, col_right = st.columns([1, 1])
 with col_left:
     st.subheader("🛠️ Pengaturan Fixed (Req & Res)")
     
-    url_input = st.text_input("URL Path / Endpoint:", placeholder="/api/v1/test")
+    # Nilai value dan index sekarang dikendalikan oleh hasil Auto-Detect
+    url_input = st.text_input("URL Path / Endpoint:", value=def_url)
     if url_input and not re.match(r'^(http|/|\\w)', url_input):
          st.warning("⚠️ Pastikan URL formatnya benar (diawali '/', 'http', dll)")
             
     c_req1, c_req2 = st.columns(2)
     with c_req1:
-        method_input = st.selectbox("Request Method:", ["GET", "POST", "PUT", "DELETE", "PATCH"])
+        method_input = st.selectbox("Request Method:", method_list, index=def_method_idx)
     with c_req2:
-        status_input = st.selectbox("Response Status:", [
-            "200 OK", "201 Created", "400 Bad Request", "401 Unauthorized", 
-            "403 Forbidden", "404 Not Found", "500 Internal Server Error"
-        ])
+        status_input = st.selectbox("Response Status:", status_list, index=def_status_idx)
         status_code = int(status_input.split(" ")[0])
         
     c_req3, c_req4 = st.columns(2)
     with c_req3:
-        delay_input = st.number_input("Fixed Delay (Milliseconds):", min_value=0, value=0, step=100)
+        delay_input = st.number_input("Fixed Delay (Milliseconds):", min_value=0, value=def_delay, step=100)
     with c_req4:
-        matched_path = st.text_input("Matched JSON Path (Opsional):", placeholder="$.data.id")
+        matched_path = st.text_input("Matched JSON Path (Opsional):", value=def_matched, placeholder="$.data.id")
 
 with col_right:
     st.subheader("👁️ Live Preview Hasil")
-    # Membuat placeholder (kotak kosong) yang akan diisi SETELAH parameter dinamis diproses
     preview_container = st.empty()
 
 # ==========================================
@@ -120,7 +159,6 @@ st.divider()
 st.subheader("🔀 Manipulasi Parameter JSON (Variasi)")
 st.caption("Pilih ADD untuk parameter baru, REMOVE untuk menghapus, atau Pilih Parameter yang sudah ada untuk memodifikasi nilainya.")
 
-# Looping UI untuk parameter akan memakan lebar penuh (full column)
 for i, row in enumerate(st.session_state.rows):
     c1, c2, c3, c4 = st.columns([2, 3, 3, 1])
     
@@ -157,37 +195,25 @@ if st.button("➕ Tambah Variasi Parameter"):
 # ==========================================
 # MERAKIT & MENGISI LIVE PREVIEW KANAN
 # ==========================================
-# (Ini ditaruh di bawah agar bisa membaca inputan terbaru dari form variasi di atas)
-preview_body = parsed_json.copy() if parsed_json else {}
+preview_json = parsed_json.copy() if parsed_json else {}
 
-for r in st.session_state.rows:
-    if not r['action'] or not r['key']: continue
-    
-    first_val = r['value'].split(",")[0].strip() if r['value'] else ""
-    
-    if r['action'] == "REMOVE EXISTING":
-        if r['key'] in preview_body:
-            del preview_body[r['key']]
-    else:
-        if r['key']:
-            preview_body[r['key']] = first_val
-            
-preview_json = {
-    "request": {
-        "method": method_input,
-        "url": url_input if url_input else "/"
-    },
-    "response": {
-        "status": status_code,
-        "fixedDelayMilliseconds": delay_input,
-        "body": preview_body
-    }
-}
+# Pastikan struktur dasarnya berbentuk WireMock (punya request & response root)
+if "request" not in preview_json: preview_json["request"] = {}
+if "response" not in preview_json: preview_json["response"] = {}
+
+# Timpa nilai-nilai root dengan apa yang ada di UI kiri
+preview_json["request"]["method"] = method_input
+if url_input: preview_json["request"]["url"] = url_input
 
 if matched_path:
-    preview_json["request"]["matchedJsonPath"] = matched_path
+    if "bodyPatterns" not in preview_json["request"]:
+        preview_json["request"]["bodyPatterns"] = [{}]
+    preview_json["request"]["bodyPatterns"][0]["matchesJsonPath"] = matched_path
 
-# Menembakkan JSON ke dalam container yang sudah disiapkan di kolom kanan
+preview_json["response"]["status"] = status_code
+if delay_input >= 0:
+    preview_json["response"]["fixedDelayMilliseconds"] = delay_input
+
 preview_container.json(preview_json)
 
 # ==========================================
@@ -207,16 +233,16 @@ if st.button("🚀 GENERATE MULTIPLE FILES (.ZIP)", type="primary", use_containe
             for r in st.session_state.rows:
                 if r['key']:
                     if r['action'] == "REMOVE EXISTING":
-                        variations_text += f"- Hapus parameter '{r['key']}' dari dalam response body.\n"
+                        variations_text += f"- Hapus parameter '{r['key']}' dari struktur JSON.\n"
                     else:
-                        variations_text += f"- Ubah/tambah parameter '{r['key']}' di dalam response body dengan nilai: {r['value']} (buatkan kombinasinya jika ada koma)\n"
+                        variations_text += f"- Ubah/tambah parameter '{r['key']}' dengan nilai: {r['value']} (buatkan kombinasinya jika ada pemisah koma)\n"
 
             base_structure = json.dumps(preview_json, indent=2)
 
             full_prompt = (
-                f"1) STRUKTUR DASAR MOCK (WAJIB DIPERTAHANKAN):\n{base_structure}\n\n"
+                f"1) STRUKTUR DASAR MOCK (JADIKAN CETAKAN UTAMA):\n{base_structure}\n\n"
                 f"2) POLA NAMA FILE:\n{filename_template}\n\n"
-                f"3) ATURAN VARIASI (Terapkan variasi ini PADA BAGIAN 'body' di dalam response):\n{variations_text}\n"
+                f"3) ATURAN VARIASI:\n{variations_text}\n"
             )
             
             success = False
@@ -227,7 +253,7 @@ if st.button("🚀 GENERATE MULTIPLE FILES (.ZIP)", type="primary", use_containe
                         model='gemini-3.1-flash-lite',
                         contents=full_prompt,
                         config=types.GenerateContentConfig(
-                            system_instruction="Anda adalah AI pembuat file Mock untuk QA. Output WAJIB berupa JSON Array murni di mana setiap item memiliki key 'filename' dan 'content'. 'content' harus mengikuti struktur dasar yang diberikan (ada request & response). JANGAN beri teks apa pun di luar JSON Array.",
+                            system_instruction="Anda adalah AI pembuat file Mock untuk QA. Output WAJIB berupa JSON Array murni di mana setiap item memiliki key 'filename' dan 'content'. 'content' harus menggunakan struktur dasar yang diberikan. Lakukan variasi data HANYA pada key yang diinstruksikan. JANGAN beri teks apa pun di luar JSON Array.",
                             response_mime_type="application/json",
                             temperature=0.2
                         )
