@@ -35,7 +35,6 @@ st.set_page_config(page_title="AutoMock.ai | Builder", layout="wide", page_icon=
 st.markdown("""
     <style>
     .header-style { background: linear-gradient(90deg, #4F46E5, #9333EA); padding: 20px; border-radius: 10px; color: white; margin-bottom: 20px; }
-    .st-emotion-cache-1v0mbdj { margin-top: 25px; } 
     </style>
     <div class="header-style">
         <h1>🤖 AutoMock.ai Builder</h1>
@@ -91,29 +90,24 @@ if base_template:
         res = parsed_json.get("response", {})
         
         if isinstance(req, dict):
-            # Cek URL
             if "url" in req: def_url = req["url"]
             elif "urlPath" in req: def_url = req["urlPath"]
             elif "urlPattern" in req: def_url = req["urlPattern"]
             
-            # Cek Method
             if "method" in req and req["method"].upper() in method_list:
                 def_method_idx = method_list.index(req["method"].upper())
                 
-            # Cek Matched JSON Path
             body_patterns = req.get("bodyPatterns", [])
             if body_patterns and isinstance(body_patterns, list) and "matchesJsonPath" in body_patterns[0]:
                 def_matched = body_patterns[0]["matchesJsonPath"]
                 
         if isinstance(res, dict):
-            # Cek Status Code
             if "status" in res:
                 status_str = str(res["status"])
                 for idx, s in enumerate(status_list):
                     if s.startswith(status_str):
                         def_status_idx = idx
                         break
-            # Cek Fixed Delay
             if "fixedDelayMilliseconds" in res:
                 def_delay = int(res["fixedDelayMilliseconds"])
                 
@@ -130,7 +124,6 @@ col_left, col_right = st.columns([1, 1])
 with col_left:
     st.subheader("🛠️ Pengaturan Fixed (Req & Res)")
     
-    # Nilai value dan index sekarang dikendalikan oleh hasil Auto-Detect
     url_input = st.text_input("URL Path / Endpoint:", value=def_url)
     if url_input and not re.match(r'^(http|/|\\w)', url_input):
          st.warning("⚠️ Pastikan URL formatnya benar (diawali '/', 'http', dll)")
@@ -184,7 +177,9 @@ for i, row in enumerate(st.session_state.rows):
             st.session_state.rows[i]['value'] = st.text_input("Isi Value", value=row['value'], placeholder="Contoh: 00, 51 (koma untuk banyak)", key=f"val_{row['id']}")
             
     with c4:
-        if st.button("🗑️ Hapus Baris", key=f"del_{row['id']}"):
+        # Menambahkan spasi kosong (margin-top 28px) agar tombol turun ke bawah dan sejajar dengan input box
+        st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
+        if st.button("🗑️ Hapus", key=f"del_{row['id']}", use_container_width=True):
             remove_row(i)
             st.rerun()
 
@@ -197,11 +192,9 @@ if st.button("➕ Tambah Variasi Parameter"):
 # ==========================================
 preview_json = parsed_json.copy() if parsed_json else {}
 
-# Pastikan struktur dasarnya berbentuk WireMock (punya request & response root)
 if "request" not in preview_json: preview_json["request"] = {}
 if "response" not in preview_json: preview_json["response"] = {}
 
-# Timpa nilai-nilai root dengan apa yang ada di UI kiri
 preview_json["request"]["method"] = method_input
 if url_input: preview_json["request"]["url"] = url_input
 
