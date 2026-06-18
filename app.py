@@ -48,10 +48,20 @@ except KeyError:
     st.error("Konfigurasi API Key tidak ditemukan di secrets.toml.")
     st.stop()
 
-if 'rows' not in st.session_state:
-    st.session_state.rows = [{'id': 0, 'action': 'ADD NEW', 'key': '', 'value': ''}]
-if 'row_counter' not in st.session_state:
-    st.session_state.row_counter = 1
+# --- DAFTAR PILIHAN FIXED ---
+method_list = ["GET", "POST", "PUT", "DELETE", "PATCH"]
+status_list = ["200 OK", "201 Created", "400 Bad Request", "401 Unauthorized", "403 Forbidden", "404 Not Found", "500 Internal Server Error"]
+
+# --- INISIALISASI SESSION STATE ---
+if 'master_json_input' not in st.session_state: st.session_state.master_json_input = ""
+if 'fixed_url' not in st.session_state: st.session_state.fixed_url = "/api/v1/test"
+if 'fixed_method' not in st.session_state: st.session_state.fixed_method = "GET"
+if 'fixed_status' not in st.session_state: st.session_state.fixed_status = "200 OK"
+if 'fixed_delay' not in st.session_state: st.session_state.fixed_delay = 0
+if 'fixed_matched' not in st.session_state: st.session_state.fixed_matched = ""
+
+if 'rows' not in st.session_state: st.session_state.rows = [{'id': 0, 'action': 'ADD NEW', 'key': '', 'value': ''}]
+if 'row_counter' not in st.session_state: st.session_state.row_counter = 1
 
 def add_row():
     st.session_state.rows.append({'id': st.session_state.row_counter, 'action': 'ADD NEW', 'key': '', 'value': ''})
@@ -61,55 +71,132 @@ def remove_row(index):
     st.session_state.rows.pop(index)
 
 # ==========================================
+# CALLBACKS: 2-WAY DATA BINDING AJAIB
+# ==========================================
+def sync_from_master():
+    """Membaca teks dari Master JSON dan mengupdate input di bawahnya"""
+    val = st.session_state.master_json_input
+    if not val.strip(): return
+    try:
+        parsed = json.loads(val)
+        is_modified = False
+        
+        # Jika cuma body json, bungkus otomatis jadi WireMock
+        if "request" not in parsed and "response" not in parsed:
+            parsed = {"request": {}, "response": {"jsonBody": parsed}}
+            is_modified = True
+            
+        req = parsed.get("request", {})
+        res = parsed.get("response", {})
+        
+        # Update URL
+        if "url" in req: st.session_state.fixed_url = req["url"]
+        elif "urlPath" in req: st.session_state.fixed_url = req["urlPath"]
+        elif "urlPattern" in req: st.session_state.fixed_url = req["urlPattern"]
+        else:
+            parsed["request"]["url"] = st.session_state.fixed_url
+            is_modified = True
+            
+        # Update Method
+        if "method" in req and req["method"].upper() in method_list:
+            st.session_state.fixed_method = req["method"].upper()
+        else:
+            parsed["request"]["method"] = st.session_state.fixed_method
+            is_modified = True
+            
+        # Update Matched Path
+        body_patterns = req.get("bodyPatterns", [])
+        if body_patterns and isinstance(body_patterns, list) and "matchesJsonPath" in body_patterns[0]:
+            st.session_state.fixed_matched = body_patterns[0]["matchesJsonPath"]
+        elif st.session_state.fixed_matched:
+            if "bodyPatterns" not in parsed["request"]: parsed["request"]["bodyPatterns"] = [{}]
+            parsed["request"]["bodyPatterns"][0]["matchesJsonPath"] = st.session_state.fixed_matched
+            is_modified = True
+            
+        # Update Status
+        if "status" in res:
+            status_str = str(res["status"])
+            for s in status_list:
+                if s.startswith(status_str):
+                    st.session_state.fixed_status = s
+                    break
+        else:
+            parsed["response"]["status"] = int(st.session_state.fixed_status.split(" ")[0])
+            is_modified = True
+            
+        # Update Delay
+        if "fixedDelayMilliseconds" in res:
+            st.session_state.fixed_delay = int(res["fixedDelayMilliseconds"])
+        else:
+            parsed["response"]["fixedDelayMilliseconds"] = st.session_state.fixed_delay
+            is_modified = True
+            
+        # Jika ada yang kita tambahkan paksa, tulis ulang ke Text Area
+        if is_modified:
+            st.session_state.master_json_input = json.dumps(parsed, indent=2)
+            
+    except Exception:
+        pass
+
+def sync_from_inputs():
+    """Membaca perubahan dari form input dan mengupdate Master JSON di atas"""
+    val = st.session_state.master_json_input
+    try:
+        parsed = json.loads(val) if val.strip() else {}
+    except:
+        parsed = {}
+        
+    if "request" not in parsed and "response" not in parsed:
+        if parsed: parsed = {"request": {}, "response": {"jsonBody": parsed}}
+        else: parsed = {"request": {}, "response": {}}
+            
+    if "request" not in parsed: parsed["request"] = {}
+    if "response" not in parsed: parsed["response"] = {}
+    
+    parsed["request"]["method"] = st.session_state.fixed_method
+    
+    if "url" in parsed["request"]: del parsed["request"]["url"]
+    if "urlPath" in parsed["request"]: del parsed["request"]["urlPath"]
+    if "urlPattern" in parsed["request"]: del parsed["request"]["urlPattern"]
+    
+    if st.session_state.fixed_url:
+        parsed["request"]["url"] = st.session_state.fixed_url
+        
+    if st.session_state.fixed_matched:
+        if "bodyPatterns" not in parsed["request"]: parsed["request"]["bodyPatterns"] = [{}]
+        parsed["request"]["bodyPatterns"][0]["matchesJsonPath"] = st.session_state.fixed_matched
+    else:
+        if "bodyPatterns" in parsed["request"] and len(parsed["request"]["bodyPatterns"]) > 0:
+            if "matchesJsonPath" in parsed["request"]["bodyPatterns"][0]:
+                del parsed["request"]["bodyPatterns"][0]["matchesJsonPath"]
+            if not parsed["request"]["bodyPatterns"][0]:
+                del parsed["request"]["bodyPatterns"]
+                
+    parsed["response"]["status"] = int(st.session_state.fixed_status.split(" ")[0])
+    parsed["response"]["fixedDelayMilliseconds"] = st.session_state.fixed_delay
+    
+    st.session_state.master_json_input = json.dumps(parsed, indent=2)
+
+# ==========================================
 # BAGIAN 1: TEMPLATE & POLA NAMA
 # ==========================================
 st.subheader("1. Konfigurasi Master")
-base_template = st.text_area("Template Master JSON (WireMock Format / Body):", height=150, placeholder='{"request": {...}, "response": {...}} atau sekadar {"data": "sample"}')
+st.text_area(
+    "Template Master JSON (WireMock Format / Body):", 
+    height=250, 
+    placeholder='{"request": {...}, "response": {...}} atau sekadar {"data": "sample"}', 
+    key="master_json_input", 
+    on_change=sync_from_master
+)
+
 filename_template = st.text_input("Pola Nama File:", placeholder="Contoh: mock_response_[code].json")
 
 parsed_json = {}
 available_keys = []
-
-# Variabel Default
-def_url = "/api/v1/test"
-def_method_idx = 0
-def_status_idx = 0
-def_delay = 0
-def_matched = ""
-
-method_list = ["GET", "POST", "PUT", "DELETE", "PATCH"]
-status_list = ["200 OK", "201 Created", "400 Bad Request", "401 Unauthorized", "403 Forbidden", "404 Not Found", "500 Internal Server Error"]
-
-if base_template:
+if st.session_state.master_json_input.strip():
     try:
-        parsed_json = json.loads(base_template)
+        parsed_json = json.loads(st.session_state.master_json_input)
         available_keys = get_all_keys(parsed_json)
-        
-        req = parsed_json.get("request", {})
-        res = parsed_json.get("response", {})
-        
-        if isinstance(req, dict):
-            if "url" in req: def_url = req["url"]
-            elif "urlPath" in req: def_url = req["urlPath"]
-            elif "urlPattern" in req: def_url = req["urlPattern"]
-            
-            if "method" in req and req["method"].upper() in method_list:
-                def_method_idx = method_list.index(req["method"].upper())
-                
-            body_patterns = req.get("bodyPatterns", [])
-            if body_patterns and isinstance(body_patterns, list) and "matchesJsonPath" in body_patterns[0]:
-                def_matched = body_patterns[0]["matchesJsonPath"]
-                
-        if isinstance(res, dict):
-            if "status" in res:
-                status_str = str(res["status"])
-                for idx, s in enumerate(status_list):
-                    if s.startswith(status_str):
-                        def_status_idx = idx
-                        break
-            if "fixedDelayMilliseconds" in res:
-                def_delay = int(res["fixedDelayMilliseconds"])
-                
     except json.JSONDecodeError:
         st.error("⚠️ Format JSON master tidak valid!")
 
@@ -123,22 +210,21 @@ col_left, col_right = st.columns([1, 1])
 with col_left:
     st.subheader("🛠️ Pengaturan Fixed (Req & Res)")
     
-    url_input = st.text_input("URL Path / Endpoint:", value=def_url)
+    url_input = st.text_input("URL Path / Endpoint:", key="fixed_url", on_change=sync_from_inputs)
     if url_input and not re.match(r'^(http|/|\\w)', url_input):
          st.warning("⚠️ Pastikan URL formatnya benar (diawali '/', 'http', dll)")
             
     c_req1, c_req2 = st.columns(2)
     with c_req1:
-        method_input = st.selectbox("Request Method:", method_list, index=def_method_idx)
+        st.selectbox("Request Method:", method_list, key="fixed_method", on_change=sync_from_inputs)
     with c_req2:
-        status_input = st.selectbox("Response Status:", status_list, index=def_status_idx)
-        status_code = int(status_input.split(" ")[0])
+        st.selectbox("Response Status:", status_list, key="fixed_status", on_change=sync_from_inputs)
         
     c_req3, c_req4 = st.columns(2)
     with c_req3:
-        delay_input = st.number_input("Fixed Delay (Milliseconds):", min_value=0, value=def_delay, step=100)
+        st.number_input("Fixed Delay (Milliseconds):", min_value=0, step=100, key="fixed_delay", on_change=sync_from_inputs)
     with c_req4:
-        matched_path = st.text_input("Matched JSON Path (Opsional):", value=def_matched, placeholder="$.data.id")
+        st.text_input("Matched JSON Path (Opsional):", placeholder="$.data.id", key="fixed_matched", on_change=sync_from_inputs)
 
 with col_right:
     st.subheader("👁️ Live Preview Hasil")
@@ -153,7 +239,6 @@ st.caption("Pilih ADD untuk parameter baru, REMOVE untuk menghapus, atau Pilih P
 
 for i, row in enumerate(st.session_state.rows):
     c1, c2, c3, c4 = st.columns([2, 3, 3, 1])
-    
     action_options = ["ADD NEW", "REMOVE EXISTING"] + available_keys
     
     with c1:
@@ -185,41 +270,13 @@ if st.button("➕ Tambah Variasi Parameter"):
     add_row()
     st.rerun()
 
-# ==========================================
-# MERAKIT & MENGISI LIVE PREVIEW KANAN (AUTO-INJECT FIXED PARAMETERS)
-# ==========================================
-preview_json = {}
-
-if parsed_json:
-    # Cek apakah JSON master sudah punya format WireMock atau cuma Body biasa
-    if "request" not in parsed_json and "response" not in parsed_json:
-        # Jika cuma Body, bungkus ke dalam response.jsonBody
-        preview_json = {
-            "request": {},
-            "response": {
-                "jsonBody": parsed_json.copy()
-            }
-        }
-    else:
-        preview_json = parsed_json.copy()
-
-# Paksa pembuatan node jika belum ada
-if "request" not in preview_json: preview_json["request"] = {}
-if "response" not in preview_json: preview_json["response"] = {}
-
-# --- INJEKSI PAKSA PARAMETER FIXED ---
-preview_json["request"]["method"] = method_input
-if url_input: preview_json["request"]["url"] = url_input
-
-if matched_path:
-    if "bodyPatterns" not in preview_json["request"]:
-        preview_json["request"]["bodyPatterns"] = [{}]
-    preview_json["request"]["bodyPatterns"][0]["matchesJsonPath"] = matched_path
-
-preview_json["response"]["status"] = status_code
-if delay_input >= 0:
-    preview_json["response"]["fixedDelayMilliseconds"] = delay_input
-
+# --- INJECT PREVIEW KANAN ---
+# Karena Template Master dan Input Fixed sudah tersinkronisasi, 
+# kita cukup menampilkan Master JSON apa adanya di kotak Preview.
+preview_json = parsed_json.copy() if parsed_json else {
+    "request": { "method": st.session_state.fixed_method, "url": st.session_state.fixed_url },
+    "response": { "status": int(st.session_state.fixed_status.split(" ")[0]), "fixedDelayMilliseconds": st.session_state.fixed_delay }
+}
 preview_container.json(preview_json)
 
 # ==========================================
@@ -228,9 +285,9 @@ preview_container.json(preview_json)
 st.divider()
 
 if st.button("🚀 GENERATE MULTIPLE FILES (.ZIP)", type="primary", use_container_width=True):
-    if not base_template or not filename_template:
+    if not st.session_state.master_json_input.strip() or not filename_template:
         st.error("⚠️ Template JSON dan Pola Nama File harus diisi!")
-    elif not url_input:
+    elif not st.session_state.fixed_url:
         st.error("⚠️ URL / Endpoint tidak boleh kosong!")
     else:
         with st.spinner("⏳ AutoMock.ai sedang merakit data dengan AI..."):
