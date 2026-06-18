@@ -113,6 +113,35 @@ def build_ordered_wiremock(parsed):
     return ordered_json
 
 # ==========================================
+# FUNGSI SINKRONISASI BARU
+# ==========================================
+def update_master_json_from_variations():
+    """Mengambil data dari rows variasi dan menyuntikkannya ke Master JSON"""
+    try:
+        # Ambil data terkini dari master
+        current_data = json.loads(st.session_state.master_json_input)
+        
+        # Pastikan struktur request/response ada
+        if "response" not in current_data: current_data["response"] = {}
+        if "jsonBody" not in current_data["response"]: 
+            current_data["response"]["jsonBody"] = {}
+            
+        # Gunakan pointer ke jsonBody
+        body = current_data["response"]["jsonBody"]
+        
+        # Terapkan semua row variasi
+        for row in st.session_state.rows:
+            if row['key'] and row['action'] == "ADD NEW":
+                body[row['key']] = row['value']
+            elif row['key'] and row['action'] == "REMOVE EXISTING":
+                body.pop(row['key'], None)
+                
+        # Simpan kembali dengan urutan ketat
+        st.session_state.master_json_input = json.dumps(build_ordered_wiremock(current_data), indent=2)
+    except:
+        pass
+
+# ==========================================
 # CALLBACKS: 2-WAY DATA BINDING AJAIB
 # ==========================================
 def sync_from_master():
@@ -235,28 +264,25 @@ for i, row in enumerate(st.session_state.rows):
     action_options = ["ADD NEW", "REMOVE EXISTING"] + available_keys
     
     with c1:
-        current_action = row['action'] if row['action'] in action_options else "ADD NEW"
-        selected_action = st.selectbox("Aksi / Target", options=action_options, index=action_options.index(current_action), key=f"act_{row['id']}")
-        st.session_state.rows[i]['action'] = selected_action
-        
+        st.session_state.rows[i]['action'] = st.selectbox(
+            "Action", action_options, key=f"a{row['id']}", 
+            on_change=update_master_json_from_variations
+        )
     with c2:
-        if selected_action == "ADD NEW":
-            st.session_state.rows[i]['key'] = st.text_input("Key Baru", value=row['key'], placeholder="nama_key", key=f"key_{row['id']}")
-        else:
-            st.session_state.rows[i]['key'] = selected_action
-            st.text_input("Key (Locked)", value=selected_action, disabled=True, key=f"lock_{row['id']}")
-            
+        st.session_state.rows[i]['key'] = st.text_input(
+            "Key", value=row['key'], key=f"k{row['id']}", 
+            on_change=update_master_json_from_variations
+        )
     with c3:
-        if selected_action == "REMOVE EXISTING":
-            st.session_state.rows[i]['value'] = ""
-            st.text_input("Value", value="-akan dihapus-", disabled=True, key=f"val_{row['id']}")
-        else:
-            st.session_state.rows[i]['value'] = st.text_input("Isi Value", value=row['value'], placeholder="Contoh: 00, 51 (koma untuk banyak)", key=f"val_{row['id']}")
-            
+        st.session_state.rows[i]['value'] = st.text_input(
+            "Value", value=row['value'], key=f"v{row['id']}", 
+            on_change=update_master_json_from_variations
+        )
     with c4:
-        st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
-        if st.button("🗑️ Hapus", key=f"del_{row['id']}", use_container_width=True):
+        st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
+        if st.button("🗑️", key=f"del{row['id']}", use_container_width=True):
             remove_row(i)
+            update_master_json_from_variations() # Panggil sinkronisasi setelah hapus
             st.rerun()
 
 if st.button("➕ Tambah Variasi Parameter"):
