@@ -7,7 +7,7 @@ import io
 import re
 
 # ==========================================
-# FUNGSI MANIPULASI NESTED JSON (ANTI-BUG)
+# FUNGSI MANIPULASI NESTED JSON
 # ==========================================
 def get_all_keys(d, parent_key=''):
     keys = []
@@ -117,7 +117,7 @@ if st.session_state.master_json_input != st.session_state.last_parsed_master:
             pass
 
 # ==========================================
-# FUNGSI KOMPILASI AKHIR (STRICT ORDERING & NESTED FIX)
+# FUNGSI KOMPILASI AKHIR (SMART TEMPLATE PLACEHOLDER & STRICT ORDERING)
 # ==========================================
 def compile_final_json():
     try:
@@ -131,7 +131,6 @@ def compile_final_json():
     if "request" not in base: base["request"] = {}
     if "response" not in base: base["response"] = {}
 
-    # Penggabungan Setelan Fixed Form
     base["request"]["url"] = st.session_state.fixed_url
     base["request"]["method"] = st.session_state.fixed_method
     
@@ -145,13 +144,16 @@ def compile_final_json():
 
     body_key = "body" if ("body" in base["response"] and "jsonBody" not in base["response"]) else "jsonBody"
     if body_key not in base["response"]: base["response"][body_key] = {}
-    
-    # Penggabungan Setelan Komponen Variasi Bersasar (Nested Object Handling)
+
+    # Penggabungan Setelan Komponen Variasi dalam bentuk Placeholder "{key}"
     for row in st.session_state.rows:
         act = row.get('action', 'ADD NEW')
         k = row.get('key', '').strip()
-        v = row.get('value', '')
         if not k: continue
+
+        # AMBIL NAMA PARAMETER PALING UJUNG UNTUK TEMPLATE PLACEHOLDER
+        leaf_key = k.split('.')[-1]
+        placeholder_value = f"{{{leaf_key}}}"
 
         if act == "REMOVE EXISTING":
             if k.startswith("headers."):
@@ -160,13 +162,12 @@ def compile_final_json():
             else:
                 delete_nested_value(base["response"][body_key], k)
         else:
-            # Berlaku untuk ADD NEW maupun modifikasi parameter existing dari dropdown
             if k.startswith("headers."):
                 if "headers" not in base["response"] or not isinstance(base["response"]["headers"], dict):
                     base["response"]["headers"] = {}
-                set_nested_value(base["response"]["headers"], k[8:], v)
+                set_nested_value(base["response"]["headers"], k[8:], placeholder_value)
             else:
-                set_nested_value(base["response"][body_key], k, v)
+                set_nested_value(base["response"][body_key], k, placeholder_value)
 
     # Membangun Urutan Kaku Sesuai Aturan Perusahaan
     ordered_json = {"request": {}, "response": {}}
@@ -208,12 +209,10 @@ if st.session_state.master_json_input.strip():
         parsed_root = json.loads(st.session_state.master_json_input)
         res_node = parsed_root.get("response", {})
         
-        # Ambil dari node body / jsonBody
         body_node = res_node.get("jsonBody", res_node.get("body", {}))
         if isinstance(body_node, dict):
             available_keys.extend(get_all_keys(body_node))
             
-        # Ambil dari node headers
         headers_node = res_node.get("headers", {})
         if isinstance(headers_node, dict):
             headers_keys = get_all_keys(headers_node)
@@ -245,7 +244,7 @@ with col_right:
     compiled_preview = compile_final_json()
     st.json(compiled_preview)
 
-# Fungsi Callback Anti StreamlitAPIException (Berjalan sebelum UI render ulang)
+# Fungsi Callback Anti StreamlitAPIException
 def sync_form_to_master():
     st.session_state.master_json_input = json.dumps(compile_final_json(), indent=2)
     st.session_state.last_parsed_master = st.session_state.master_json_input
