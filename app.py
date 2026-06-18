@@ -52,7 +52,7 @@ st.markdown("""
     </style>
     <div class="header-style">
         <h1>🤖 AutoMock.ai Builder</h1>
-        <p>Enterprise Mock JSON Generator | Crafted by Oktaviansyah and Designed by Alberth Shanta 🚀</p>
+        <p>Enterprise Mock JSON Generator | Crafted by Oktaviansyah and Designed by Albert Shanta 🚀</p>
     </div>
     """, unsafe_allow_html=True)
 
