@@ -71,6 +71,51 @@ def remove_row(index):
     st.session_state.rows.pop(index)
 
 # ==========================================
+# FUNGSI PENGATUR URUTAN KETAT (STRICT ORDERING)
+# ==========================================
+def build_ordered_wiremock(parsed):
+    """Membongkar dan merakit ulang JSON dengan urutan yang sangat ketat."""
+    if "request" not in parsed and "response" not in parsed:
+        parsed = {"request": {}, "response": {"jsonBody": parsed}}
+
+    old_req = parsed.get("request", {})
+    old_res = parsed.get("response", {})
+
+    ordered_json = {"request": {}, "response": {}}
+
+    # --- 1. REQUEST ORDERING ---
+    ordered_json["request"]["url"] = st.session_state.fixed_url
+    ordered_json["request"]["method"] = st.session_state.fixed_method
+    
+    if st.session_state.fixed_matched:
+        ordered_json["request"]["bodyPatterns"] = [{"matchesJsonPath": st.session_state.fixed_matched}]
+        
+    # Masukkan sisa key dari request jika ada
+    for k, v in old_req.items():
+        if k not in ["url", "urlPath", "urlPattern", "method", "bodyPatterns"]:
+            ordered_json["request"][k] = v
+
+    # --- 2. RESPONSE ORDERING ---
+    ordered_json["response"]["status"] = int(st.session_state.fixed_status.split(" ")[0])
+    
+    if "headers" in old_res:
+        ordered_json["response"]["headers"] = old_res["headers"]
+        
+    ordered_json["response"]["fixedDelayMilliseconds"] = st.session_state.fixed_delay
+    
+    if "jsonBody" in old_res:
+        ordered_json["response"]["jsonBody"] = old_res["jsonBody"]
+    elif "body" in old_res:
+        ordered_json["response"]["body"] = old_res["body"]
+        
+    # Masukkan sisa key dari response jika ada
+    for k, v in old_res.items():
+        if k not in ["status", "headers", "fixedDelayMilliseconds", "jsonBody", "body"]:
+            ordered_json["response"][k] = v
+
+    return ordered_json
+
+# ==========================================
 # CALLBACKS: 2-WAY DATA BINDING AJAIB
 # ==========================================
 def sync_from_master():
@@ -79,62 +124,39 @@ def sync_from_master():
     if not val.strip(): return
     try:
         parsed = json.loads(val)
-        is_modified = False
         
-        # Jika cuma body json, bungkus otomatis jadi WireMock
         if "request" not in parsed and "response" not in parsed:
             parsed = {"request": {}, "response": {"jsonBody": parsed}}
-            is_modified = True
             
         req = parsed.get("request", {})
         res = parsed.get("response", {})
         
-        # Update URL
+        # Ekstrak data dari teks ke UI Variable
         if "url" in req: st.session_state.fixed_url = req["url"]
         elif "urlPath" in req: st.session_state.fixed_url = req["urlPath"]
         elif "urlPattern" in req: st.session_state.fixed_url = req["urlPattern"]
-        else:
-            parsed["request"]["url"] = st.session_state.fixed_url
-            is_modified = True
-            
-        # Update Method
+        
         if "method" in req and req["method"].upper() in method_list:
             st.session_state.fixed_method = req["method"].upper()
-        else:
-            parsed["request"]["method"] = st.session_state.fixed_method
-            is_modified = True
             
-        # Update Matched Path
         body_patterns = req.get("bodyPatterns", [])
-        if body_patterns and isinstance(body_patterns, list) and "matchesJsonPath" in body_patterns[0]:
+        if body_patterns and isinstance(body_patterns, list) and len(body_patterns) > 0 and "matchesJsonPath" in body_patterns[0]:
             st.session_state.fixed_matched = body_patterns[0]["matchesJsonPath"]
-        elif st.session_state.fixed_matched:
-            if "bodyPatterns" not in parsed["request"]: parsed["request"]["bodyPatterns"] = [{}]
-            parsed["request"]["bodyPatterns"][0]["matchesJsonPath"] = st.session_state.fixed_matched
-            is_modified = True
             
-        # Update Status
         if "status" in res:
             status_str = str(res["status"])
             for s in status_list:
                 if s.startswith(status_str):
                     st.session_state.fixed_status = s
                     break
-        else:
-            parsed["response"]["status"] = int(st.session_state.fixed_status.split(" ")[0])
-            is_modified = True
-            
-        # Update Delay
+                    
         if "fixedDelayMilliseconds" in res:
             st.session_state.fixed_delay = int(res["fixedDelayMilliseconds"])
-        else:
-            parsed["response"]["fixedDelayMilliseconds"] = st.session_state.fixed_delay
-            is_modified = True
-            
-        # Jika ada yang kita tambahkan paksa, tulis ulang ke Text Area
-        if is_modified:
-            st.session_state.master_json_input = json.dumps(parsed, indent=2)
-            
+
+        # Rakit ulang agar urutannya paten sesuai instruksi bos
+        ordered = build_ordered_wiremock(parsed)
+        st.session_state.master_json_input = json.dumps(ordered, indent=2)
+        
     except Exception:
         pass
 
@@ -146,36 +168,10 @@ def sync_from_inputs():
     except:
         parsed = {}
         
-    if "request" not in parsed and "response" not in parsed:
-        if parsed: parsed = {"request": {}, "response": {"jsonBody": parsed}}
-        else: parsed = {"request": {}, "response": {}}
-            
-    if "request" not in parsed: parsed["request"] = {}
-    if "response" not in parsed: parsed["response"] = {}
-    
-    parsed["request"]["method"] = st.session_state.fixed_method
-    
-    if "url" in parsed["request"]: del parsed["request"]["url"]
-    if "urlPath" in parsed["request"]: del parsed["request"]["urlPath"]
-    if "urlPattern" in parsed["request"]: del parsed["request"]["urlPattern"]
-    
-    if st.session_state.fixed_url:
-        parsed["request"]["url"] = st.session_state.fixed_url
-        
-    if st.session_state.fixed_matched:
-        if "bodyPatterns" not in parsed["request"]: parsed["request"]["bodyPatterns"] = [{}]
-        parsed["request"]["bodyPatterns"][0]["matchesJsonPath"] = st.session_state.fixed_matched
-    else:
-        if "bodyPatterns" in parsed["request"] and len(parsed["request"]["bodyPatterns"]) > 0:
-            if "matchesJsonPath" in parsed["request"]["bodyPatterns"][0]:
-                del parsed["request"]["bodyPatterns"][0]["matchesJsonPath"]
-            if not parsed["request"]["bodyPatterns"][0]:
-                del parsed["request"]["bodyPatterns"]
-                
-    parsed["response"]["status"] = int(st.session_state.fixed_status.split(" ")[0])
-    parsed["response"]["fixedDelayMilliseconds"] = st.session_state.fixed_delay
-    
-    st.session_state.master_json_input = json.dumps(parsed, indent=2)
+    # Selalu rakit ulang dengan format baku setiap kali ada perubahan UI
+    ordered = build_ordered_wiremock(parsed)
+    st.session_state.master_json_input = json.dumps(ordered, indent=2)
+
 
 # ==========================================
 # BAGIAN 1: TEMPLATE & POLA NAMA
@@ -183,7 +179,7 @@ def sync_from_inputs():
 st.subheader("1. Konfigurasi Master")
 st.text_area(
     "Template Master JSON (WireMock Format / Body):", 
-    height=250, 
+    height=300, 
     placeholder='{"request": {...}, "response": {...}} atau sekadar {"data": "sample"}', 
     key="master_json_input", 
     on_change=sync_from_master
@@ -271,10 +267,10 @@ if st.button("➕ Tambah Variasi Parameter"):
     st.rerun()
 
 # --- INJECT PREVIEW KANAN ---
-# Karena Template Master dan Input Fixed sudah tersinkronisasi, 
-# kita cukup menampilkan Master JSON apa adanya di kotak Preview.
+# Preview akan persis menampilkan apa yang ada di kotak Master JSON, karena Master JSON 
+# sekarang secara konstan sudah dirapikan posisinya oleh fungsi build_ordered_wiremock()
 preview_json = parsed_json.copy() if parsed_json else {
-    "request": { "method": st.session_state.fixed_method, "url": st.session_state.fixed_url },
+    "request": { "url": st.session_state.fixed_url, "method": st.session_state.fixed_method },
     "response": { "status": int(st.session_state.fixed_status.split(" ")[0]), "fixedDelayMilliseconds": st.session_state.fixed_delay }
 }
 preview_container.json(preview_json)
@@ -316,7 +312,7 @@ if st.button("🚀 GENERATE MULTIPLE FILES (.ZIP)", type="primary", use_containe
                         model='gemini-3.1-flash-lite',
                         contents=full_prompt,
                         config=types.GenerateContentConfig(
-                            system_instruction="Anda adalah AI pembuat file Mock untuk QA. Output WAJIB berupa JSON Array murni di mana setiap item memiliki key 'filename' dan 'content'. 'content' harus mengikuti STRUKTUR DASAR MOCK secara persis, termasuk request method, url, dan status. Lakukan variasi data HANYA pada bagian body sesuai aturan. JANGAN beri teks apa pun di luar JSON Array.",
+                            system_instruction="Anda adalah AI pembuat file Mock untuk QA. Output WAJIB berupa JSON Array murni di mana setiap item memiliki key 'filename' dan 'content'. 'content' harus mematuhi urutan struktur dasar secara persis, yaitu request (url, method, bodyPatterns) dan response (status, headers, fixedDelayMilliseconds, jsonBody/body). Lakukan variasi data HANYA pada bagian body sesuai aturan. JANGAN beri teks apa pun di luar JSON Array.",
                             response_mime_type="application/json",
                             temperature=0.2
                         )
