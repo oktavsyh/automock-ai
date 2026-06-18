@@ -61,16 +61,16 @@ def remove_row(index):
     st.session_state.rows.pop(index)
 
 # ==========================================
-# BAGIAN 1: TEMPLATE & POLA NAMA (DENGAN AUTO-FILL LOGIC)
+# BAGIAN 1: TEMPLATE & POLA NAMA
 # ==========================================
 st.subheader("1. Konfigurasi Master")
-base_template = st.text_area("Template Master JSON (WireMock Format / Body):", height=150, placeholder='{"request": {...}, "response": {...}}')
+base_template = st.text_area("Template Master JSON (WireMock Format / Body):", height=150, placeholder='{"request": {...}, "response": {...}} atau sekadar {"data": "sample"}')
 filename_template = st.text_input("Pola Nama File:", placeholder="Contoh: mock_response_[code].json")
 
 parsed_json = {}
 available_keys = []
 
-# Variabel Default untuk Auto-Fill UI
+# Variabel Default
 def_url = "/api/v1/test"
 def_method_idx = 0
 def_status_idx = 0
@@ -85,7 +85,6 @@ if base_template:
         parsed_json = json.loads(base_template)
         available_keys = get_all_keys(parsed_json)
         
-        # --- LOGIKA AUTO-DETECT DARI MASTER JSON ---
         req = parsed_json.get("request", {})
         res = parsed_json.get("response", {})
         
@@ -177,7 +176,6 @@ for i, row in enumerate(st.session_state.rows):
             st.session_state.rows[i]['value'] = st.text_input("Isi Value", value=row['value'], placeholder="Contoh: 00, 51 (koma untuk banyak)", key=f"val_{row['id']}")
             
     with c4:
-        # Menambahkan spasi kosong (margin-top 28px) agar tombol turun ke bawah dan sejajar dengan input box
         st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
         if st.button("🗑️ Hapus", key=f"del_{row['id']}", use_container_width=True):
             remove_row(i)
@@ -188,13 +186,28 @@ if st.button("➕ Tambah Variasi Parameter"):
     st.rerun()
 
 # ==========================================
-# MERAKIT & MENGISI LIVE PREVIEW KANAN
+# MERAKIT & MENGISI LIVE PREVIEW KANAN (AUTO-INJECT FIXED PARAMETERS)
 # ==========================================
-preview_json = parsed_json.copy() if parsed_json else {}
+preview_json = {}
 
+if parsed_json:
+    # Cek apakah JSON master sudah punya format WireMock atau cuma Body biasa
+    if "request" not in parsed_json and "response" not in parsed_json:
+        # Jika cuma Body, bungkus ke dalam response.jsonBody
+        preview_json = {
+            "request": {},
+            "response": {
+                "jsonBody": parsed_json.copy()
+            }
+        }
+    else:
+        preview_json = parsed_json.copy()
+
+# Paksa pembuatan node jika belum ada
 if "request" not in preview_json: preview_json["request"] = {}
 if "response" not in preview_json: preview_json["response"] = {}
 
+# --- INJEKSI PAKSA PARAMETER FIXED ---
 preview_json["request"]["method"] = method_input
 if url_input: preview_json["request"]["url"] = url_input
 
@@ -246,7 +259,7 @@ if st.button("🚀 GENERATE MULTIPLE FILES (.ZIP)", type="primary", use_containe
                         model='gemini-3.1-flash-lite',
                         contents=full_prompt,
                         config=types.GenerateContentConfig(
-                            system_instruction="Anda adalah AI pembuat file Mock untuk QA. Output WAJIB berupa JSON Array murni di mana setiap item memiliki key 'filename' dan 'content'. 'content' harus menggunakan struktur dasar yang diberikan. Lakukan variasi data HANYA pada key yang diinstruksikan. JANGAN beri teks apa pun di luar JSON Array.",
+                            system_instruction="Anda adalah AI pembuat file Mock untuk QA. Output WAJIB berupa JSON Array murni di mana setiap item memiliki key 'filename' dan 'content'. 'content' harus mengikuti STRUKTUR DASAR MOCK secara persis, termasuk request method, url, dan status. Lakukan variasi data HANYA pada bagian body sesuai aturan. JANGAN beri teks apa pun di luar JSON Array.",
                             response_mime_type="application/json",
                             temperature=0.2
                         )
