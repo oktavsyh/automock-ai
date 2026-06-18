@@ -7,7 +7,7 @@ import io
 import re
 
 # ==========================================
-# FUNGSI PEMBANTU
+# FUNGSI PEMBANTU UTAMA
 # ==========================================
 def get_all_keys(d, parent_key=''):
     keys = []
@@ -28,7 +28,7 @@ def get_all_keys(d, parent_key=''):
     return keys
 
 # ==========================================
-# SETUP APLIKASI & STATE
+# SETUP APLIKASI & SESSION STATE
 # ==========================================
 st.set_page_config(page_title="AutoMock.ai | Builder", layout="wide", page_icon="🤖")
 
@@ -38,7 +38,7 @@ st.markdown("""
     </style>
     <div class="header-style">
         <h1>🤖 AutoMock.ai Builder</h1>
-        <p>Enterprise Mock JSON Generator | Crafted by Oktaviansyah & Designed by Albert Shanta 🚀</p>
+        <p>Enterprise Mock JSON Generator | Crafted by Oktaviansyah 🚀</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -48,14 +48,11 @@ except KeyError:
     st.error("Konfigurasi API Key tidak ditemukan di secrets.toml.")
     st.stop()
 
-# --- DAFTAR PILIHAN FIXED ---
-method_list = ["GET", "POST", "PUT", "DELETE", "PATCH"]
-status_list = ["200 OK", "201 Created", "400 Bad Request", "401 Unauthorized", "403 Forbidden", "404 Not Found", "500 Internal Server Error"]
-
-# --- INISIALISASI SESSION STATE ---
+# --- INISIALISASI VARIABEL STATE ---
 if 'master_json_input' not in st.session_state: st.session_state.master_json_input = ""
-if 'fixed_url' not in st.session_state: st.session_state.fixed_url = "/api/v1/test"
-if 'fixed_method' not in st.session_state: st.session_state.fixed_method = "GET"
+if 'last_parsed_master' not in st.session_state: st.session_state.last_parsed_master = ""
+if 'fixed_url' not in st.session_state: st.session_state.fixed_url = "/api/v1/subscription/upgrade"
+if 'fixed_method' not in st.session_state: st.session_state.fixed_method = "POST"
 if 'fixed_status' not in st.session_state: st.session_state.fixed_status = "200 OK"
 if 'fixed_delay' not in st.session_state: st.session_state.fixed_delay = 0
 if 'fixed_matched' not in st.session_state: st.session_state.fixed_matched = ""
@@ -70,190 +67,194 @@ def add_row():
 def remove_row(index):
     st.session_state.rows.pop(index)
 
+# --- DAFTAR PILIHAN STANDAR ---
+method_list = ["GET", "POST", "PUT", "DELETE", "PATCH"]
+status_list = ["200 OK", "201 Created", "400 Bad Request", "401 Unauthorized", "403 Forbidden", "404 Not Found", "500 Internal Server Error"]
+
 # ==========================================
-# FUNGSI PENGATUR URUTAN KETAT (STRICT ORDERING)
+# DETEKSI AKSI MANUAL (CTRL + ENTER) PADA MASTER JSON
 # ==========================================
-def build_ordered_wiremock(parsed):
-    """Membongkar dan merakit ulang JSON dengan urutan ketat sesuai instruksi."""
-    if "request" not in parsed and "response" not in parsed:
-        parsed = {"request": {}, "response": {"jsonBody": parsed}}
+if st.session_state.master_json_input != st.session_state.last_parsed_master:
+    val = st.session_state.master_json_input
+    if val.strip():
+        try:
+            parsed = json.loads(val)
+            req = parsed.get("request", {})
+            res = parsed.get("response", {})
+            
+            if "url" in req: st.session_state.fixed_url = req["url"]
+            if "method" in req and req["method"].upper() in method_list: 
+                st.session_state.fixed_method = req["method"].upper()
+                
+            body_patterns = req.get("bodyPatterns", [])
+            if body_patterns and isinstance(body_patterns, list) and len(body_patterns) > 0:
+                st.session_state.fixed_matched = body_patterns[0].get("matchesJsonPath", "")
+                
+            if "status" in res:
+                status_str = str(res["status"])
+                for s in status_list:
+                    if s.startswith(status_str):
+                        st.session_state.fixed_status = s
+                        break
+            if "fixedDelayMilliseconds" in res:
+                st.session_state.fixed_delay = int(res["fixedDelayMilliseconds"])
+                
+            st.session_state.last_parsed_master = val
+        except:
+            pass
 
-    old_req = parsed.get("request", {})
-    old_res = parsed.get("response", {})
+# ==========================================
+# FUNGSI KOMPILASI AKHIR (STRICT ORDERING)
+# ==========================================
+def compile_final_json():
+    try:
+        base = json.loads(st.session_state.master_json_input) if st.session_state.master_json_input.strip() else {}
+    except:
+        base = {}
 
-    ordered_json = {"request": {}, "response": {}}
+    if base and "request" not in base and "response" not in base:
+        base = {"request": {}, "response": {"jsonBody": base}}
 
-    # --- 1. REQUEST ORDERING (STRICT) ---
-    ordered_json["request"]["url"] = st.session_state.fixed_url
-    ordered_json["request"]["method"] = st.session_state.fixed_method
+    if "request" not in base: base["request"] = {}
+    if "response" not in base: base["response"] = {}
+
+    # Penggabungan Setelan Fixed Form
+    base["request"]["url"] = st.session_state.fixed_url
+    base["request"]["method"] = st.session_state.fixed_method
     
     if st.session_state.fixed_matched:
-        ordered_json["request"]["bodyPatterns"] = [{"matchesJsonPath": st.session_state.fixed_matched}]
-        
-    for k, v in old_req.items():
-        if k not in ["url", "urlPath", "urlPattern", "method", "bodyPatterns"]:
+        base["request"]["bodyPatterns"] = [{"matchesJsonPath": st.session_state.fixed_matched}]
+    else:
+        base["request"].pop("bodyPatterns", None)
+
+    base["response"]["status"] = int(st.session_state.fixed_status.split(" ")[0])
+    base["response"]["fixedDelayMilliseconds"] = st.session_state.fixed_delay
+
+    body_key = "body" if ("body" in base["response"] and "jsonBody" not in base["response"]) else "jsonBody"
+    if body_key not in base["response"]: base["response"][body_key] = {}
+    
+    body = base["response"][body_key]
+
+    # Penggabungan Setelan Komponen Variasi secara Aman
+    if isinstance(body, dict):
+        for row in st.session_state.rows:
+            act = row.get('action', 'ADD NEW')
+            k = row.get('key', '').strip()
+            v = row.get('value', '')
+            if not k: continue
+
+            if act == "ADD NEW" or act not in ["ADD NEW", "REMOVE EXISTING"]:
+                body[k] = v
+            elif act == "REMOVE EXISTING":
+                body.pop(k, None)
+
+    # Membangun Urutan Kaku Sesuai Aturan Perusahaan
+    ordered_json = {"request": {}, "response": {}}
+    ordered_json["request"]["url"] = base["request"]["url"]
+    ordered_json["request"]["method"] = base["request"]["method"]
+    if "bodyPatterns" in base["request"]:
+        ordered_json["request"]["bodyPatterns"] = base["request"]["bodyPatterns"]
+    for k, v in base["request"].items():
+        if k not in ["url", "method", "bodyPatterns"]:
             ordered_json["request"][k] = v
 
-    # --- 2. RESPONSE ORDERING (STRICT) ---
-    ordered_json["response"]["status"] = int(st.session_state.fixed_status.split(" ")[0])
-    ordered_json["response"]["fixedDelayMilliseconds"] = st.session_state.fixed_delay
-    
-    if "headers" in old_res:
-        ordered_json["response"]["headers"] = old_res["headers"]
-    
-    if "jsonBody" in old_res:
-        ordered_json["response"]["jsonBody"] = old_res["jsonBody"]
-    elif "body" in old_res:
-        ordered_json["response"]["body"] = old_res["body"]
-        
-    for k, v in old_res.items():
-        if k not in ["status", "fixedDelayMilliseconds", "headers", "jsonBody", "body"]:
+    ordered_json["response"]["status"] = base["response"]["status"]
+    ordered_json["response"]["fixedDelayMilliseconds"] = base["response"]["fixedDelayMilliseconds"]
+    if "headers" in base["response"]:
+        ordered_json["response"]["headers"] = base["response"]["headers"]
+    ordered_json["response"][body_key] = base["response"][body_key]
+    for k, v in base["response"].items():
+        if k not in ["status", "fixedDelayMilliseconds", "headers", body_key]:
             ordered_json["response"][k] = v
 
     return ordered_json
 
-
-
 # ==========================================
-# CALLBACKS: 2-WAY DATA BINDING AJAIB
-# ==========================================
-def sync_from_master():
-    """Membaca teks dari Master JSON dan mengupdate input di bawahnya"""
-    val = st.session_state.master_json_input
-    if not val.strip(): return
-    try:
-        parsed = json.loads(val)
-        
-        if "request" not in parsed and "response" not in parsed:
-            parsed = {"request": {}, "response": {"jsonBody": parsed}}
-            
-        req = parsed.get("request", {})
-        res = parsed.get("response", {})
-        
-        # Ekstrak data dari teks ke UI Variable
-        if "url" in req: st.session_state.fixed_url = req["url"]
-        elif "urlPath" in req: st.session_state.fixed_url = req["urlPath"]
-        elif "urlPattern" in req: st.session_state.fixed_url = req["urlPattern"]
-        
-        if "method" in req and req["method"].upper() in method_list:
-            st.session_state.fixed_method = req["method"].upper()
-            
-        body_patterns = req.get("bodyPatterns", [])
-        if body_patterns and isinstance(body_patterns, list) and len(body_patterns) > 0 and "matchesJsonPath" in body_patterns[0]:
-            st.session_state.fixed_matched = body_patterns[0]["matchesJsonPath"]
-            
-        if "status" in res:
-            status_str = str(res["status"])
-            for s in status_list:
-                if s.startswith(status_str):
-                    st.session_state.fixed_status = s
-                    break
-                    
-        if "fixedDelayMilliseconds" in res:
-            st.session_state.fixed_delay = int(res["fixedDelayMilliseconds"])
-
-        # Rakit ulang agar urutannya paten sesuai instruksi bos
-        ordered = build_ordered_wiremock(parsed)
-        st.session_state.master_json_input = json.dumps(ordered, indent=2)
-        
-    except Exception:
-        pass
-
-def sync_from_inputs():
-    """Membaca perubahan dari form input dan mengupdate Master JSON di atas"""
-    val = st.session_state.master_json_input
-    try:
-        parsed = json.loads(val) if val.strip() else {}
-    except:
-        parsed = {}
-        
-    # Selalu rakit ulang dengan format baku setiap kali ada perubahan UI
-    ordered = build_ordered_wiremock(parsed)
-    st.session_state.master_json_input = json.dumps(ordered, indent=2)
-
-
-# ==========================================
-# BAGIAN 1: TEMPLATE & POLA NAMA
+# BAGIAN 1: FORM UTAMA
 # ==========================================
 st.subheader("1. Konfigurasi Master")
 st.text_area(
-    "Template Master JSON (WireMock Format / Body):", 
-    height=300, 
-    placeholder='{"request": {...}, "response": {...}} atau sekadar {"data": "sample"}', 
-    key="master_json_input", 
-    on_change=sync_from_master
+    "Template Master JSON (Tekan Ctrl + Enter untuk Menerapkan Perubahan):", 
+    height=250, 
+    key="master_json_input"
 )
+filename_template = st.text_input("Pola Nama File:", placeholder="Contoh: mock_response_[code].json", value="mock_response_[code].json")
 
-filename_template = st.text_input("Pola Nama File:", placeholder="Contoh: mock_response_[code].json")
-
-parsed_json = {}
+# Ekstraksi Kunci Pendukung Komponen Dropdown Variasi
+parsed_root = {}
 available_keys = []
 if st.session_state.master_json_input.strip():
     try:
-        parsed_json = json.loads(st.session_state.master_json_input)
-        available_keys = get_all_keys(parsed_json)
-    except json.JSONDecodeError:
-        st.error("⚠️ Format JSON master tidak valid!")
+        parsed_root = json.loads(st.session_state.master_json_input)
+        res_node = parsed_root.get("response", {})
+        body_node = res_node.get("jsonBody", res_node.get("body", parsed_root))
+        if isinstance(body_node, dict):
+            available_keys = get_all_keys(body_node)
+    except:
+        pass
 
 st.divider()
 
 # ==========================================
-# BAGIAN 2: BUILDER FIXED KIRI & PREVIEW KANAN
+# BAGIAN 2: PENGATURAN FIXED & PREVIEW
 # ==========================================
 col_left, col_right = st.columns([1, 1])
 
 with col_left:
     st.subheader("🛠️ Pengaturan Fixed (Req & Res)")
+    st.text_input("URL Path / Endpoint:", key="fixed_url")
     
-    url_input = st.text_input("URL Path / Endpoint:", key="fixed_url", on_change=sync_from_inputs)
-    if url_input and not re.match(r'^(http|/|\\w)', url_input):
-         st.warning("⚠️ Pastikan URL formatnya benar (diawali '/', 'http', dll)")
-            
     c_req1, c_req2 = st.columns(2)
-    with c_req1:
-        st.selectbox("Request Method:", method_list, key="fixed_method", on_change=sync_from_inputs)
-    with c_req2:
-        st.selectbox("Response Status:", status_list, key="fixed_status", on_change=sync_from_inputs)
+    with c_req1: st.selectbox("Request Method:", method_list, key="fixed_method")
+    with c_req2: st.selectbox("Response Status:", status_list, key="fixed_status")
         
     c_req3, c_req4 = st.columns(2)
-    with c_req3:
-        st.number_input("Fixed Delay (Milliseconds):", min_value=0, step=100, key="fixed_delay", on_change=sync_from_inputs)
-    with c_req4:
-        st.text_input("Matched JSON Path (Opsional):", placeholder="$.data.id", key="fixed_matched", on_change=sync_from_inputs)
+    with c_req3: st.number_input("Fixed Delay (Milliseconds):", min_value=0, step=100, key="fixed_delay")
+    with c_req4: st.text_input("Matched JSON Path (Opsional):", key="fixed_matched")
 
 with col_right:
     st.subheader("👁️ Live Preview Hasil")
-    preview_container = st.empty()
+    compiled_preview = compile_final_json()
+    st.json(compiled_preview)
+
+# Tombol Aksi Manual Pengisian Kembali ke Atas
+if st.button("💾 Sinkronisasikan Form ke Template Master", use_container_width=True):
+    st.session_state.master_json_input = json.dumps(compiled_preview, indent=2)
+    st.session_state.last_parsed_master = st.session_state.master_json_input
+    st.rerun()
 
 # ==========================================
-# BAGIAN 3: PARAMETER DINAMIS (FULL WIDTH)
+# BAGIAN 3: MANIPULASI PARAMETER VARIASI (FULL WIDTH)
 # ==========================================
 st.divider()
 st.subheader("🔀 Manipulasi Parameter JSON (Variasi)")
-st.caption("Pilih ADD untuk parameter baru, REMOVE untuk menghapus, atau Pilih Parameter yang sudah ada untuk memodifikasi nilainya.")
+st.caption("Gunakan kolom input Key secara bebas hanya pada aksi ADD NEW & REMOVE EXISTING. Parameter bawaan akan otomatis terkunci.")
 
 for i, row in enumerate(st.session_state.rows):
     c1, c2, c3, c4 = st.columns([2, 3, 3, 1])
     action_options = ["ADD NEW", "REMOVE EXISTING"] + available_keys
     
     with c1:
-        current_action = row['action'] if row['action'] in action_options else "ADD NEW"
-        selected_action = st.selectbox("Aksi / Target", options=action_options, index=action_options.index(current_action), key=f"act_{row['id']}")
-        st.session_state.rows[i]['action'] = selected_action
+        current_act = row['action'] if row['action'] in action_options else "ADD NEW"
+        selected_act = st.selectbox("Aksi / Target", action_options, index=action_options.index(current_act), key=f"act_{row['id']}")
+        st.session_state.rows[i]['action'] = selected_act
         
     with c2:
-        if selected_action == "ADD NEW":
-            st.session_state.rows[i]['key'] = st.text_input("Key Baru", value=row['key'], placeholder="nama_key", key=f"key_{row['id']}")
+        # LOGIKA PERBAIKAN UTAMA: Jika memilih parameter existing, kunci kolom input secara mutlak
+        is_existing_param = selected_act not in ["ADD NEW", "REMOVE EXISTING"]
+        
+        if is_existing_param:
+            st.session_state.rows[i]['key'] = selected_act
+            st.text_input("Key (Terkunci)", value=selected_act, disabled=True, key=f"key_disp_{row['id']}")
         else:
-            st.session_state.rows[i]['key'] = selected_action
-            st.text_input("Key (Locked)", value=selected_action, disabled=True, key=f"lock_{row['id']}")
+            st.session_state.rows[i]['key'] = st.text_input("Nama Key", value=row['key'], key=f"key_input_{row['id']}", placeholder="Masukkan path/nama parameter")
             
     with c3:
-        if selected_action == "REMOVE EXISTING":
+        if selected_act == "REMOVE EXISTING":
             st.session_state.rows[i]['value'] = ""
-            st.text_input("Value", value="-akan dihapus-", disabled=True, key=f"val_{row['id']}")
+            st.text_input("Value", value="- Sifat Penghapusan -", disabled=True, key=f"val_disp_{row['id']}")
         else:
-            st.session_state.rows[i]['value'] = st.text_input("Isi Value", value=row['value'], placeholder="Contoh: 00, 51 (koma untuk banyak)", key=f"val_{row['id']}")
+            st.session_state.rows[i]['value'] = st.text_input("Isi Value Variasi", value=row['value'], key=f"val_input_{row['id']}", placeholder="Contoh: ValA, ValB (Gunakan koma untuk multi-variasi)")
             
     with c4:
         st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
@@ -265,42 +266,32 @@ if st.button("➕ Tambah Variasi Parameter"):
     add_row()
     st.rerun()
 
-# --- INJECT PREVIEW KANAN ---
-# Preview akan persis menampilkan apa yang ada di kotak Master JSON, karena Master JSON 
-# sekarang secara konstan sudah dirapikan posisinya oleh fungsi build_ordered_wiremock()
-preview_json = parsed_json.copy() if parsed_json else {
-    "request": { "url": st.session_state.fixed_url, "method": st.session_state.fixed_method },
-    "response": { "status": int(st.session_state.fixed_status.split(" ")[0]), "fixedDelayMilliseconds": st.session_state.fixed_delay }
-}
-preview_container.json(preview_json)
-
 # ==========================================
-# BAGIAN 4: GENERATE AI
+# BAGIAN 4: PEMBUATAN FILE ZIP DENGAN AI
 # ==========================================
 st.divider()
 
 if st.button("🚀 GENERATE MULTIPLE FILES (.ZIP)", type="primary", use_container_width=True):
-    if not st.session_state.master_json_input.strip() or not filename_template:
-        st.error("⚠️ Template JSON dan Pola Nama File harus diisi!")
-    elif not st.session_state.fixed_url:
-        st.error("⚠️ URL / Endpoint tidak boleh kosong!")
+    if not st.session_state.master_json_input.strip():
+        st.error("⚠️ Template JSON Utama tidak boleh kosong!")
     else:
-        with st.spinner("⏳ AutoMock.ai sedang merakit data dengan AI..."):
-            
+        with st.spinner("⏳ AutoMock.ai sedang menyusun struktur variasi file mock..."):
             variations_text = ""
             for r in st.session_state.rows:
                 if r['key']:
                     if r['action'] == "REMOVE EXISTING":
-                        variations_text += f"- Hapus parameter '{r['key']}' dari struktur JSON.\n"
+                        variations_text += f"- Hapus parameter '{r['key']}' dari response body.\n"
+                    elif r['action'] == "ADD NEW":
+                        variations_text += f"- Tambahkan parameter baru '{r['key']}' ke response body dengan nilai/kombinasi: {r['value']}.\n"
                     else:
-                        variations_text += f"- Ubah/tambah parameter '{r['key']}' dengan nilai: {r['value']} (buatkan kombinasinya jika ada pemisah koma)\n"
+                        variations_text += f"- Ubah nilai parameter existing '{r['key']}' menjadi variasi nilai berikut: {r['value']}.\n"
 
-            base_structure = json.dumps(preview_json, indent=2)
+            base_structure = json.dumps(compiled_preview, indent=2)
 
             full_prompt = (
-                f"1) STRUKTUR DASAR MOCK (JADIKAN CETAKAN UTAMA):\n{base_structure}\n\n"
+                f"1) STRUKTUR CETAKAN UTAMA:\n{base_structure}\n\n"
                 f"2) POLA NAMA FILE:\n{filename_template}\n\n"
-                f"3) ATURAN VARIASI:\n{variations_text}\n"
+                f"3) INSTRUKSI VARIASI DATA:\n{variations_text}\n"
             )
             
             success = False
@@ -311,14 +302,13 @@ if st.button("🚀 GENERATE MULTIPLE FILES (.ZIP)", type="primary", use_containe
                         model='gemini-3.1-flash-lite',
                         contents=full_prompt,
                         config=types.GenerateContentConfig(
-                            system_instruction="Anda adalah AI pembuat file Mock untuk QA. Output WAJIB berupa JSON Array murni di mana setiap item memiliki key 'filename' dan 'content'. 'content' harus mematuhi urutan struktur dasar secara persis, yaitu request (url, method, bodyPatterns) dan response (status, headers, fixedDelayMilliseconds, jsonBody/body). Lakukan variasi data HANYA pada bagian body sesuai aturan. JANGAN beri teks apa pun di luar JSON Array.",
+                            system_instruction="Anda adalah sistem pembuat berkas otomatis untuk QA. Kembalikan data dalam bentuk JSON Array murni. Setiap item wajib memiliki kunci 'filename' dan 'content'. Node 'content' wajib mempertahankan susunan struktural kaku secara mutlak (request: url, method, bodyPatterns; response: status, fixedDelayMilliseconds, headers, jsonBody). Jangan menyertakan penulisan markdown di luar format array.",
                             response_mime_type="application/json",
                             temperature=0.2
                         )
                     )
                     
                     generated_data = json.loads(response.text)
-                    
                     zip_buffer = io.BytesIO()
                     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
                         for item in generated_data:
@@ -327,18 +317,18 @@ if st.button("🚀 GENERATE MULTIPLE FILES (.ZIP)", type="primary", use_containe
                             zf.writestr(fname, fcontent)
                     zip_buffer.seek(0)
                     
-                    st.success("✅ File berhasil di-generate!")
+                    st.success("✅ Seluruh berkas skenario variasi berhasil dibuat!")
                     st.download_button(
                         label="📥 DOWNLOAD HASIL (.ZIP)",
                         data=zip_buffer,
-                        file_name="AutoMock_results.zip",
+                        file_name="AutoMock_Skenario_QA.zip",
                         mime="application/zip",
                         use_container_width=True
                     )
                     success = True
                     break
-                except Exception as e:
+                except:
                     continue
             
             if not success:
-                st.error("❌ Gagal melakukan generate. Periksa format JSON master atau API Key Anda.")
+                st.error("❌ Terjadi kendala saat memproses generate berkas. Periksa validitas API Key atau susunan JSON Anda.")
