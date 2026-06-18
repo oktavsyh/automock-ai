@@ -7,25 +7,39 @@ import io
 import re
 
 # ==========================================
-# FUNGSI PEMBANTU UTAMA
+# FUNGSI MANIPULASI NESTED JSON (ANTI-BUG)
 # ==========================================
 def get_all_keys(d, parent_key=''):
     keys = []
     if isinstance(d, dict):
         for k, v in d.items():
             new_key = f"{parent_key}.{k}" if parent_key else k
-            if isinstance(v, (dict, list)):
-                keys.extend(get_all_keys(v, new_key))
-            else:
-                keys.append(new_key)
-    elif isinstance(d, list):
-        for i, v in enumerate(d):
-            new_key = f"{parent_key}[{i}]"
-            if isinstance(v, (dict, list)):
+            if isinstance(v, dict):
                 keys.extend(get_all_keys(v, new_key))
             else:
                 keys.append(new_key)
     return keys
+
+def set_nested_value(d, path, value):
+    """Menyisipkan atau mengubah nilai pada struktur path bersarang (deep tree)"""
+    parts = path.split('.')
+    current = d
+    for part in parts[:-1]:
+        if part not in current or not isinstance(current[part], dict):
+            current[part] = {}
+        current = current[part]
+    current[parts[-1]] = value
+
+def delete_nested_value(d, path):
+    """Menghapus parameter tepat pada koordinat path bersarangnya"""
+    parts = path.split('.')
+    current = d
+    for part in parts[:-1]:
+        if part not in current or not isinstance(current[part], dict):
+            return
+        current = current[part]
+    if parts[-1] in current:
+        current.pop(parts[-1])
 
 # ==========================================
 # SETUP APLIKASI & SESSION STATE
@@ -38,7 +52,7 @@ st.markdown("""
     </style>
     <div class="header-style">
         <h1>🤖 AutoMock.ai Builder</h1>
-        <p>Enterprise Mock JSON Generator | Crafted by Oktaviansyah 🚀</p>
+        <p>Enterprise Mock JSON Generator | Crafted by Oktaviansyah and Designed by Alberth Shanta 🚀</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -67,7 +81,6 @@ def add_row():
 def remove_row(index):
     st.session_state.rows.pop(index)
 
-# --- DAFTAR PILIHAN STANDAR ---
 method_list = ["GET", "POST", "PUT", "DELETE", "PATCH"]
 status_list = ["200 OK", "201 Created", "400 Bad Request", "401 Unauthorized", "403 Forbidden", "404 Not Found", "500 Internal Server Error"]
 
@@ -104,7 +117,7 @@ if st.session_state.master_json_input != st.session_state.last_parsed_master:
             pass
 
 # ==========================================
-# FUNGSI KOMPILASI AKHIR (STRICT ORDERING)
+# FUNGSI KOMPILASI AKHIR (STRICT ORDERING & NESTED FIX)
 # ==========================================
 def compile_final_json():
     try:
@@ -133,20 +146,27 @@ def compile_final_json():
     body_key = "body" if ("body" in base["response"] and "jsonBody" not in base["response"]) else "jsonBody"
     if body_key not in base["response"]: base["response"][body_key] = {}
     
-    body = base["response"][body_key]
+    # Penggabungan Setelan Komponen Variasi Bersasar (Nested Object Handling)
+    for row in st.session_state.rows:
+        act = row.get('action', 'ADD NEW')
+        k = row.get('key', '').strip()
+        v = row.get('value', '')
+        if not k: continue
 
-    # Penggabungan Setelan Komponen Variasi secara Aman
-    if isinstance(body, dict):
-        for row in st.session_state.rows:
-            act = row.get('action', 'ADD NEW')
-            k = row.get('key', '').strip()
-            v = row.get('value', '')
-            if not k: continue
-
-            if act == "ADD NEW" or act not in ["ADD NEW", "REMOVE EXISTING"]:
-                body[k] = v
-            elif act == "REMOVE EXISTING":
-                body.pop(k, None)
+        if act == "REMOVE EXISTING":
+            if k.startswith("headers."):
+                if "headers" in base["response"]:
+                    delete_nested_value(base["response"]["headers"], k[8:])
+            else:
+                delete_nested_value(base["response"][body_key], k)
+        else:
+            # Berlaku untuk ADD NEW maupun modifikasi parameter existing dari dropdown
+            if k.startswith("headers."):
+                if "headers" not in base["response"] or not isinstance(base["response"]["headers"], dict):
+                    base["response"]["headers"] = {}
+                set_nested_value(base["response"]["headers"], k[8:], v)
+            else:
+                set_nested_value(base["response"][body_key], k, v)
 
     # Membangun Urutan Kaku Sesuai Aturan Perusahaan
     ordered_json = {"request": {}, "response": {}}
@@ -180,16 +200,24 @@ st.text_area(
 )
 filename_template = st.text_input("Pola Nama File:", placeholder="Contoh: mock_response_[code].json", value="mock_response_[code].json")
 
-# Ekstraksi Kunci Pendukung Komponen Dropdown Variasi
+# EKSTRAKSI SEMUA KUNCI (Mendukung jsonBody & headers)
 parsed_root = {}
 available_keys = []
 if st.session_state.master_json_input.strip():
     try:
         parsed_root = json.loads(st.session_state.master_json_input)
         res_node = parsed_root.get("response", {})
-        body_node = res_node.get("jsonBody", res_node.get("body", parsed_root))
+        
+        # Ambil dari node body / jsonBody
+        body_node = res_node.get("jsonBody", res_node.get("body", {}))
         if isinstance(body_node, dict):
-            available_keys = get_all_keys(body_node)
+            available_keys.extend(get_all_keys(body_node))
+            
+        # Ambil dari node headers
+        headers_node = res_node.get("headers", {})
+        if isinstance(headers_node, dict):
+            headers_keys = get_all_keys(headers_node)
+            available_keys.extend([f"headers.{hk}" for hk in headers_keys])
     except:
         pass
 
@@ -217,12 +245,11 @@ with col_right:
     compiled_preview = compile_final_json()
     st.json(compiled_preview)
 
-# Fungsi Callback untuk sinkronisasi (berjalan di background sebelum UI digambar)
+# Fungsi Callback Anti StreamlitAPIException (Berjalan sebelum UI render ulang)
 def sync_form_to_master():
     st.session_state.master_json_input = json.dumps(compile_final_json(), indent=2)
     st.session_state.last_parsed_master = st.session_state.master_json_input
 
-# Tombol Aksi Manual Pengisian Kembali ke Atas menggunakan on_click
 st.button("💾 Sinkronisasikan Form ke Template Master", use_container_width=True, on_click=sync_form_to_master)
 
 # ==========================================
@@ -242,14 +269,13 @@ for i, row in enumerate(st.session_state.rows):
         st.session_state.rows[i]['action'] = selected_act
         
     with c2:
-        # LOGIKA PERBAIKAN UTAMA: Jika memilih parameter existing, kunci kolom input secara mutlak
         is_existing_param = selected_act not in ["ADD NEW", "REMOVE EXISTING"]
         
         if is_existing_param:
             st.session_state.rows[i]['key'] = selected_act
             st.text_input("Key (Terkunci)", value=selected_act, disabled=True, key=f"key_disp_{row['id']}")
         else:
-            st.session_state.rows[i]['key'] = st.text_input("Nama Key", value=row['key'], key=f"key_input_{row['id']}", placeholder="Masukkan path/nama parameter")
+            st.session_state.rows[i]['key'] = st.text_input("Nama Key", value=row['key'], key=f"key_input_{row['id']}", placeholder="Masukkan path/nama parameter (e.g. systemData.gatewayNumber)")
             
     with c3:
         if selected_act == "REMOVE EXISTING":
@@ -282,7 +308,7 @@ if st.button("🚀 GENERATE MULTIPLE FILES (.ZIP)", type="primary", use_containe
             for r in st.session_state.rows:
                 if r['key']:
                     if r['action'] == "REMOVE EXISTING":
-                        variations_text += f"- Hapus parameter '{r['key']}' dari response body.\n"
+                        variations_text += f"- Hapus parameter '{r['key']}' dari response.\n"
                     elif r['action'] == "ADD NEW":
                         variations_text += f"- Tambahkan parameter baru '{r['key']}' ke response body dengan nilai/kombinasi: {r['value']}.\n"
                     else:
