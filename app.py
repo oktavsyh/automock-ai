@@ -112,33 +112,7 @@ def build_ordered_wiremock(parsed):
 
     return ordered_json
 
-# ==========================================
-# FUNGSI SINKRONISASI BARU
-# ==========================================
-def update_master_json_from_variations():
-    try:
-        current_data = json.loads(st.session_state.master_json_input)
-        if "response" not in current_data: current_data["response"] = {}
-        if "jsonBody" not in current_data["response"]: current_data["response"]["jsonBody"] = {}
-            
-        body = current_data["response"]["jsonBody"]
-        
-        for row in st.session_state.rows:
-            if not row['key']: continue
-            
-            # Jika ADD NEW, tambahkan key baru
-            if row['action'] == "ADD NEW":
-                body[row['key']] = row['value']
-            # Jika Modify (yaitu key yang sudah ada), update nilainya
-            elif row['action'] not in ["ADD NEW", "REMOVE EXISTING"]:
-                body[row['key']] = row['value']
-            # Jika REMOVE
-            elif row['action'] == "REMOVE EXISTING":
-                body.pop(row['key'], None)
-                
-        st.session_state.master_json_input = json.dumps(build_ordered_wiremock(current_data), indent=2)
-    except:
-        pass
+
 
 # ==========================================
 # CALLBACKS: 2-WAY DATA BINDING AJAIB
@@ -263,28 +237,28 @@ for i, row in enumerate(st.session_state.rows):
     action_options = ["ADD NEW", "REMOVE EXISTING"] + available_keys
     
     with c1:
-        st.session_state.rows[i]['action'] = st.selectbox("Action", action_options, key=f"a{row['id']}", on_change=update_master_json_from_variations)
-    
-    with c2:
-        # LOGIKA: Jika action adalah ADD NEW, baru input box aktif. 
-        # Jika action adalah salah satu dari available_keys, maka dia kunci (disabled).
-        is_locked = st.session_state.rows[i]['action'] not in ["ADD NEW", "REMOVE EXISTING"]
+        current_action = row['action'] if row['action'] in action_options else "ADD NEW"
+        selected_action = st.selectbox("Aksi / Target", options=action_options, index=action_options.index(current_action), key=f"act_{row['id']}")
+        st.session_state.rows[i]['action'] = selected_action
         
-        if not is_locked:
-            st.session_state.rows[i]['key'] = st.text_input("Key", value=row['key'], key=f"k{row['id']}", on_change=update_master_json_from_variations)
+    with c2:
+        if selected_action == "ADD NEW":
+            st.session_state.rows[i]['key'] = st.text_input("Key Baru", value=row['key'], placeholder="nama_key", key=f"key_{row['id']}")
         else:
-            # Mengunci input dengan nilai dari dropdown
-            st.session_state.rows[i]['key'] = st.session_state.rows[i]['action']
-            st.text_input("Key", value=st.session_state.rows[i]['action'], disabled=True, key=f"k{row['id']}")
+            st.session_state.rows[i]['key'] = selected_action
+            st.text_input("Key (Locked)", value=selected_action, disabled=True, key=f"lock_{row['id']}")
             
     with c3:
-        st.session_state.rows[i]['value'] = st.text_input("Value", value=row['value'], key=f"v{row['id']}", on_change=update_master_json_from_variations)
+        if selected_action == "REMOVE EXISTING":
+            st.session_state.rows[i]['value'] = ""
+            st.text_input("Value", value="-akan dihapus-", disabled=True, key=f"val_{row['id']}")
+        else:
+            st.session_state.rows[i]['value'] = st.text_input("Isi Value", value=row['value'], placeholder="Contoh: 00, 51 (koma untuk banyak)", key=f"val_{row['id']}")
             
     with c4:
-        st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
-        if st.button("🗑️", key=f"del{row['id']}", use_container_width=True):
+        st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
+        if st.button("🗑️ Hapus", key=f"del_{row['id']}", use_container_width=True):
             remove_row(i)
-            update_master_json_from_variations()
             st.rerun()
 
 if st.button("➕ Tambah Variasi Parameter"):
