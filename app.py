@@ -74,7 +74,7 @@ def remove_row(index):
 # FUNGSI PENGATUR URUTAN KETAT (STRICT ORDERING)
 # ==========================================
 def build_ordered_wiremock(parsed):
-    """Membongkar dan merakit ulang JSON dengan urutan yang sangat ketat."""
+    """Membongkar dan merakit ulang JSON dengan urutan ketat sesuai instruksi."""
     if "request" not in parsed and "response" not in parsed:
         parsed = {"request": {}, "response": {"jsonBody": parsed}}
 
@@ -83,34 +83,31 @@ def build_ordered_wiremock(parsed):
 
     ordered_json = {"request": {}, "response": {}}
 
-    # --- 1. REQUEST ORDERING ---
+    # --- 1. REQUEST ORDERING (STRICT) ---
     ordered_json["request"]["url"] = st.session_state.fixed_url
     ordered_json["request"]["method"] = st.session_state.fixed_method
     
     if st.session_state.fixed_matched:
         ordered_json["request"]["bodyPatterns"] = [{"matchesJsonPath": st.session_state.fixed_matched}]
         
-    # Masukkan sisa key dari request jika ada
     for k, v in old_req.items():
         if k not in ["url", "urlPath", "urlPattern", "method", "bodyPatterns"]:
             ordered_json["request"][k] = v
 
-    # --- 2. RESPONSE ORDERING ---
+    # --- 2. RESPONSE ORDERING (STRICT) ---
     ordered_json["response"]["status"] = int(st.session_state.fixed_status.split(" ")[0])
+    ordered_json["response"]["fixedDelayMilliseconds"] = st.session_state.fixed_delay
     
     if "headers" in old_res:
         ordered_json["response"]["headers"] = old_res["headers"]
-        
-    ordered_json["response"]["fixedDelayMilliseconds"] = st.session_state.fixed_delay
     
     if "jsonBody" in old_res:
         ordered_json["response"]["jsonBody"] = old_res["jsonBody"]
     elif "body" in old_res:
         ordered_json["response"]["body"] = old_res["body"]
         
-    # Masukkan sisa key dari response jika ada
     for k, v in old_res.items():
-        if k not in ["status", "headers", "fixedDelayMilliseconds", "jsonBody", "body"]:
+        if k not in ["status", "fixedDelayMilliseconds", "headers", "jsonBody", "body"]:
             ordered_json["response"][k] = v
 
     return ordered_json
