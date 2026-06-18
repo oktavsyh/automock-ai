@@ -217,11 +217,13 @@ with col_right:
     compiled_preview = compile_final_json()
     st.json(compiled_preview)
 
-# Tombol Aksi Manual Pengisian Kembali ke Atas
-if st.button("💾 Sinkronisasikan Form ke Template Master", use_container_width=True):
-    st.session_state.master_json_input = json.dumps(compiled_preview, indent=2)
+# Fungsi Callback untuk sinkronisasi (berjalan di background sebelum UI digambar)
+def sync_form_to_master():
+    st.session_state.master_json_input = json.dumps(compile_final_json(), indent=2)
     st.session_state.last_parsed_master = st.session_state.master_json_input
-    st.rerun()
+
+# Tombol Aksi Manual Pengisian Kembali ke Atas menggunakan on_click
+st.button("💾 Sinkronisasikan Form ke Template Master", use_container_width=True, on_click=sync_form_to_master)
 
 # ==========================================
 # BAGIAN 3: MANIPULASI PARAMETER VARIASI (FULL WIDTH)
