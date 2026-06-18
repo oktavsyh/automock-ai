@@ -85,9 +85,9 @@ method_list = ["GET", "POST", "PUT", "DELETE", "PATCH"]
 status_list = ["200 OK", "201 Created", "400 Bad Request", "401 Unauthorized", "403 Forbidden", "404 Not Found", "500 Internal Server Error"]
 
 # ==========================================
-# DETEKSI AKSI MANUAL (CTRL + ENTER) PADA MASTER JSON
+# DETEKSI AKSI MANUAL PADA MASTER JSON
 # ==========================================
-is_json_valid = True  # Flag global untuk status validitas JSON
+is_json_valid = True
 
 if st.session_state.master_json_input != st.session_state.last_parsed_master:
     val = st.session_state.master_json_input
@@ -120,13 +120,12 @@ if st.session_state.master_json_input != st.session_state.last_parsed_master:
             is_json_valid = False
 
 # ==========================================
-# FUNGSI KOMPILASI AKHIR (SMART TEMPLATE PLACEHOLDER & STRICT ORDERING)
+# FUNGSI KOMPILASI AKHIR & BLUEPRINT
 # ==========================================
 def compile_final_json():
     try:
         base = json.loads(st.session_state.master_json_input) if st.session_state.master_json_input.strip() else {}
     except json.JSONDecodeError:
-        # Jika error, kembalikan dict berisi pesan error agar Live Preview tidak ngaco
         return {"error": "⚠️ Format Master JSON tidak valid. Silakan perbaiki sintaks JSON di atas."}
 
     if base and "request" not in base and "response" not in base:
@@ -135,6 +134,7 @@ def compile_final_json():
     if "request" not in base: base["request"] = {}
     if "response" not in base: base["response"] = {}
 
+    # Penggabungan Setelan Fixed Form
     base["request"]["url"] = st.session_state.fixed_url
     base["request"]["method"] = st.session_state.fixed_method
     
@@ -149,7 +149,7 @@ def compile_final_json():
     body_key = "body" if ("body" in base["response"] and "jsonBody" not in base["response"]) else "jsonBody"
     if body_key not in base["response"]: base["response"][body_key] = {}
 
-    # Penggabungan Setelan Komponen Variasi dalam bentuk Placeholder "{key}"
+    # Blueprint Formatting: Menyusun placeholder otomatis untuk Master & Preview
     for row in st.session_state.rows:
         act = row.get('action', 'ADD NEW')
         k = row.get('key', '').strip()
@@ -172,7 +172,7 @@ def compile_final_json():
             else:
                 set_nested_value(base["response"][body_key], k, placeholder_value)
 
-    # Membangun Urutan Kaku
+    # Strict Ordering
     ordered_json = {"request": {}, "response": {}}
     ordered_json["request"]["url"] = base["request"]["url"]
     ordered_json["request"]["method"] = base["request"]["method"]
@@ -194,17 +194,40 @@ def compile_final_json():
     return ordered_json
 
 # ==========================================
+# FUNGSI AUTO-SYNC (MENGHAPUS KEBUTUHAN TOMBOL)
+# ==========================================
+def auto_sync():
+    """Mengumpulkan status input form secara realtime lalu merakit ulang Master JSON"""
+    # Mengambil nilai dari widget ke dalam rows
+    for row in st.session_state.rows:
+        rid = row['id']
+        if f"act_{rid}" in st.session_state: row['action'] = st.session_state[f"act_{rid}"]
+        
+        if row['action'] not in ["ADD NEW", "REMOVE EXISTING"]:
+            row['key'] = row['action']
+        else:
+            if f"key_input_{rid}" in st.session_state: row['key'] = st.session_state[f"key_input_{rid}"]
+                
+        if f"val_input_{rid}" in st.session_state: row['value'] = st.session_state[f"val_input_{rid}"]
+
+    # Menyimpan dan menyinkronkan Blueprint
+    if is_json_valid:
+        compiled = compile_final_json()
+        if "error" not in compiled:
+            st.session_state.master_json_input = json.dumps(compiled, indent=2)
+            st.session_state.last_parsed_master = st.session_state.master_json_input
+
+# ==========================================
 # BAGIAN 1: FORM UTAMA
 # ==========================================
 st.subheader("1. Konfigurasi Master")
 st.text_area(
-    "Template Master JSON (Tekan Ctrl + Enter untuk Menerapkan Perubahan):", 
+    "Template Master JSON (Edit langsung di sini, atau gunakan form di bawah untuk otomatisasi):", 
     height=250, 
     key="master_json_input"
 )
 filename_template = st.text_input("Pola Nama File:", placeholder="Contoh: mock_response_[code].json", value="mock_response_[code].json")
 
-# EKSTRAKSI SEMUA KUNCI & PENANGANAN ERROR JSON
 parsed_root = {}
 available_keys = []
 if st.session_state.master_json_input.strip():
@@ -213,8 +236,7 @@ if st.session_state.master_json_input.strip():
         res_node = parsed_root.get("response", {})
         
         body_node = res_node.get("jsonBody", res_node.get("body", {}))
-        if isinstance(body_node, dict):
-            available_keys.extend(get_all_keys(body_node))
+        if isinstance(body_node, dict): available_keys.extend(get_all_keys(body_node))
             
         headers_node = res_node.get("headers", {})
         if isinstance(headers_node, dict):
@@ -235,71 +257,62 @@ col_left, col_right = st.columns([1, 1])
 
 with col_left:
     st.subheader("🛠️ Pengaturan Fixed (Req & Res)")
-    st.text_input("URL Path / Endpoint:", key="fixed_url")
+    st.text_input("URL Path / Endpoint:", key="fixed_url", on_change=auto_sync)
     
     c_req1, c_req2 = st.columns(2)
-    with c_req1: st.selectbox("Request Method:", method_list, key="fixed_method")
-    with c_req2: st.selectbox("Response Status:", status_list, key="fixed_status")
+    with c_req1: st.selectbox("Request Method:", method_list, key="fixed_method", on_change=auto_sync)
+    with c_req2: st.selectbox("Response Status:", status_list, key="fixed_status", on_change=auto_sync)
         
     c_req3, c_req4 = st.columns(2)
-    with c_req3: st.number_input("Fixed Delay (Milliseconds):", min_value=0, step=100, key="fixed_delay")
-    with c_req4: st.text_input("Matched JSON Path (Opsional):", key="fixed_matched")
+    with c_req3: st.number_input("Fixed Delay (Milliseconds):", min_value=0, step=100, key="fixed_delay", on_change=auto_sync)
+    with c_req4: st.text_input("Matched JSON Path (Opsional):", key="fixed_matched", on_change=auto_sync)
 
 with col_right:
     st.subheader("👁️ Live Preview Hasil")
     compiled_preview = compile_final_json()
-    # Jika json tidak valid, tampilkan dengan tema error di preview
     if "error" in compiled_preview:
         st.warning(compiled_preview["error"])
     else:
         st.json(compiled_preview)
 
-# Fungsi Callback Anti StreamlitAPIException
-def sync_form_to_master():
-    if is_json_valid:
-        st.session_state.master_json_input = json.dumps(compile_final_json(), indent=2)
-        st.session_state.last_parsed_master = st.session_state.master_json_input
-    else:
-        pass # Cegah sinkronisasi kalau JSON lagi error
-
-st.button("💾 Sinkronisasikan Form ke Template Master", use_container_width=True, on_click=sync_form_to_master, disabled=not is_json_valid)
-
 # ==========================================
-# BAGIAN 3: MANIPULASI PARAMETER VARIASI (FULL WIDTH)
+# BAGIAN 3: MANIPULASI PARAMETER VARIASI
 # ==========================================
 st.divider()
 st.subheader("🔀 Manipulasi Parameter JSON (Variasi)")
-st.caption("Gunakan kolom input Key secara bebas hanya pada aksi ADD NEW & REMOVE EXISTING. Parameter bawaan akan otomatis terkunci.")
+st.caption("Semua perubahan di form ini akan OTOMATIS tersinkronisasi menjadi Placeholder '{key}' di Master JSON.")
 
 for i, row in enumerate(st.session_state.rows):
     c1, c2, c3, c4 = st.columns([2, 3, 3, 1])
-    action_options = ["ADD NEW", "REMOVE EXISTING"] + available_keys
     
+    # Kumpulkan kunci dropdown yang tersedia
+    action_options = ["ADD NEW", "REMOVE EXISTING"] + available_keys
+    current_act = row['action']
+    if current_act not in action_options and current_act not in ["", None]:
+        action_options.append(current_act)
+
     with c1:
-        current_act = row['action'] if row['action'] in action_options else "ADD NEW"
-        selected_act = st.selectbox("Aksi / Target", action_options, index=action_options.index(current_act), key=f"act_{row['id']}")
-        st.session_state.rows[i]['action'] = selected_act
+        st.session_state.rows[i]['action'] = st.selectbox("Aksi / Target", action_options, index=action_options.index(current_act) if current_act in action_options else 0, key=f"act_{row['id']}", on_change=auto_sync)
         
     with c2:
-        is_existing_param = selected_act not in ["ADD NEW", "REMOVE EXISTING"]
+        is_existing_param = st.session_state.rows[i]['action'] not in ["ADD NEW", "REMOVE EXISTING"]
         
         if is_existing_param:
-            st.session_state.rows[i]['key'] = selected_act
-            st.text_input("Key (Terkunci)", value=selected_act, disabled=True, key=f"key_disp_{row['id']}")
+            st.text_input("Key (Terkunci)", value=st.session_state.rows[i]['action'], disabled=True, key=f"key_disp_{row['id']}")
         else:
-            st.session_state.rows[i]['key'] = st.text_input("Nama Key", value=row['key'], key=f"key_input_{row['id']}", placeholder="Masukkan path/nama parameter (e.g. systemData.gatewayNumber)")
+            st.text_input("Nama Key", value=row['key'], key=f"key_input_{row['id']}", placeholder="e.g. systemData.gatewayNumber", on_change=auto_sync)
             
     with c3:
-        if selected_act == "REMOVE EXISTING":
-            st.session_state.rows[i]['value'] = ""
-            st.text_input("Value", value="- Sifat Penghapusan -", disabled=True, key=f"val_disp_{row['id']}")
+        if st.session_state.rows[i]['action'] == "REMOVE EXISTING":
+            st.text_input("Value", value="- Akan Dihapus Secara Menyeluruh -", disabled=True, key=f"val_disp_{row['id']}")
         else:
-            st.session_state.rows[i]['value'] = st.text_input("Isi Value Variasi", value=row['value'], key=f"val_input_{row['id']}", placeholder="Contoh: ValA, ValB (Gunakan koma untuk multi-variasi)")
+            st.text_input("Isi Value Variasi", value=row['value'], key=f"val_input_{row['id']}", placeholder="Contoh: ValA, ValB", on_change=auto_sync)
             
     with c4:
         st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
         if st.button("🗑️ Hapus", key=f"del_{row['id']}", use_container_width=True):
             remove_row(i)
+            auto_sync()
             st.rerun()
 
 if st.button("➕ Tambah Variasi Parameter"):
@@ -321,19 +334,20 @@ if st.button("🚀 GENERATE MULTIPLE FILES (.ZIP)", type="primary", use_containe
             variations_text = ""
             for r in st.session_state.rows:
                 if r['key']:
+                    leaf_key = r['key'].split('.')[-1]
                     if r['action'] == "REMOVE EXISTING":
-                        variations_text += f"- Hapus parameter '{r['key']}' dari response.\n"
+                        variations_text += f"- Pastikan parameter '{r['key']}' dihapus dari blueprint.\n"
                     elif r['action'] == "ADD NEW":
-                        variations_text += f"- Tambahkan parameter baru '{r['key']}' ke response body dengan nilai/kombinasi: {r['value']}.\n"
+                        variations_text += f"- Ganti placeholder {{{leaf_key}}} pada '{r['key']}' dengan nilai: {r['value']}.\n"
                     else:
-                        variations_text += f"- Ubah nilai parameter existing '{r['key']}' menjadi variasi nilai berikut: {r['value']}.\n"
+                        variations_text += f"- Ganti placeholder {{{leaf_key}}} pada '{r['key']}' dengan nilai variasi: {r['value']}. (INSTRUKSI MUTLAK: Jika nilai berupa instruksi generate/random, patuhi 100% dan JANGAN menyisakan prefix dari nilai aslinya!).\n"
 
             base_structure = json.dumps(compiled_preview, indent=2)
 
             full_prompt = (
-                f"1) STRUKTUR CETAKAN UTAMA:\n{base_structure}\n\n"
+                f"1) BLUEPRINT CETAKAN UTAMA (PERTAHANKAN STRUKTURNYA):\n{base_structure}\n\n"
                 f"2) POLA NAMA FILE:\n{filename_template}\n\n"
-                f"3) INSTRUKSI VARIASI DATA:\n{variations_text}\n"
+                f"3) INSTRUKSI VARIASI DATA UNTUK SETIAP FILE:\n{variations_text}\n"
             )
             
             success = False
@@ -344,7 +358,7 @@ if st.button("🚀 GENERATE MULTIPLE FILES (.ZIP)", type="primary", use_containe
                         model='gemini-3.1-flash-lite',
                         contents=full_prompt,
                         config=types.GenerateContentConfig(
-                            system_instruction="Anda adalah sistem pembuat berkas otomatis untuk QA. Kembalikan data dalam bentuk JSON Array murni. Setiap item wajib memiliki kunci 'filename' dan 'content'. Node 'content' wajib mempertahankan susunan struktural kaku secara mutlak (request: url, method, bodyPatterns; response: status, fixedDelayMilliseconds, headers, jsonBody). Jangan menyertakan penulisan markdown di luar format array.",
+                            system_instruction="Anda adalah sistem pembuat berkas Mock API otomatis. Kembalikan data dalam bentuk JSON Array murni. Setiap item wajib memiliki 'filename' dan 'content'. Node 'content' WAJIB mengikuti BLUEPRINT CETAKAN UTAMA. Jangan tinggalkan tanda kurung kurawal (placeholder) pada hasil akhir. Jangan menambahkan tulisan apapun di luar JSON Array.",
                             response_mime_type="application/json",
                             temperature=0.2
                         )
@@ -373,4 +387,4 @@ if st.button("🚀 GENERATE MULTIPLE FILES (.ZIP)", type="primary", use_containe
                     continue
             
             if not success:
-                st.error("❌ Terjadi kendala saat memproses generate berkas. Periksa validitas API Key atau susunan JSON Anda.")
+                st.error("❌ Terjadi kendala saat memproses generate berkas. Periksa validitas API Key atau instruksi AI Anda.")
