@@ -7,7 +7,7 @@ import io
 import re
 
 # ==========================================
-# FUNGSI MANIPULASI NESTED JSON
+# NESTED JSON MANIPULATION FUNCTIONS
 # ==========================================
 def get_all_keys(d, parent_key=''):
     keys = []
@@ -21,7 +21,7 @@ def get_all_keys(d, parent_key=''):
     return keys
 
 def set_nested_value(d, path, value):
-    """Menyisipkan atau mengubah nilai pada struktur path bersarang (deep tree)"""
+    """Insert or update value in a deep nested path"""
     parts = path.split('.')
     current = d
     for part in parts[:-1]:
@@ -31,7 +31,7 @@ def set_nested_value(d, path, value):
     current[parts[-1]] = value
 
 def delete_nested_value(d, path):
-    """Menghapus parameter tepat pada koordinat path bersarangnya"""
+    """Delete a parameter at its exact nested coordinate"""
     parts = path.split('.')
     current = d
     for part in parts[:-1]:
@@ -42,7 +42,7 @@ def delete_nested_value(d, path):
         current.pop(parts[-1])
 
 # ==========================================
-# SETUP APLIKASI & SESSION STATE
+# APP SETUP & SESSION STATE
 # ==========================================
 st.set_page_config(page_title="AutoMock.ai | Builder", layout="wide", page_icon="🤖")
 
@@ -59,10 +59,10 @@ st.markdown("""
 try:
     api_keys = st.secrets["GEMINI_API_KEYS"]
 except KeyError:
-    st.error("Konfigurasi API Key tidak ditemukan di secrets.toml.")
+    st.error("API Key configuration not found in secrets.toml.")
     st.stop()
 
-# --- INISIALISASI VARIABEL STATE ---
+# --- INITIALIZE STATE VARIABLES ---
 if 'master_json_input' not in st.session_state: st.session_state.master_json_input = ""
 if 'last_parsed_master' not in st.session_state: st.session_state.last_parsed_master = ""
 if 'fixed_url' not in st.session_state: st.session_state.fixed_url = "/api/v1/subscription/upgrade"
@@ -85,7 +85,7 @@ method_list = ["GET", "POST", "PUT", "DELETE", "PATCH"]
 status_list = ["200 OK", "201 Created", "400 Bad Request", "401 Unauthorized", "403 Forbidden", "404 Not Found", "500 Internal Server Error"]
 
 # ==========================================
-# DETEKSI AKSI MANUAL PADA MASTER JSON
+# MANUAL ACTION DETECTION ON MASTER JSON
 # ==========================================
 is_json_valid = True
 
@@ -120,13 +120,13 @@ if st.session_state.master_json_input != st.session_state.last_parsed_master:
             is_json_valid = False
 
 # ==========================================
-# FUNGSI KOMPILASI AKHIR & BLUEPRINT
+# FINAL COMPILATION & BLUEPRINT FUNCTION
 # ==========================================
 def compile_final_json():
     try:
         base = json.loads(st.session_state.master_json_input) if st.session_state.master_json_input.strip() else {}
     except json.JSONDecodeError:
-        return {"error": "⚠️ Format Master JSON tidak valid. Silakan perbaiki sintaks JSON di atas."}
+        return {"error": "⚠️ Invalid Master JSON format. Please fix the JSON syntax above."}
 
     if base and "request" not in base and "response" not in base:
         base = {"request": {}, "response": {"jsonBody": base}}
@@ -191,7 +191,7 @@ def compile_final_json():
     return ordered_json
 
 # ==========================================
-# FUNGSI AUTO-SYNC & CALLBACK HAPUS (ANTI-CRASH)
+# AUTO-SYNC & DELETE CALLBACK
 # ==========================================
 def auto_sync():
     for row in st.session_state.rows:
@@ -210,14 +210,14 @@ def auto_sync():
             st.session_state.last_parsed_master = st.session_state.master_json_input
 
 def handle_delete_row(index, row_data):
-    """Callback khusus untuk menghapus baris dan merevert nilai ADD NEW dari Master JSON"""
+    """Callback to delete a row and revert the ADD NEW value from Master JSON"""
     try:
         if is_json_valid and st.session_state.master_json_input.strip():
             base = json.loads(st.session_state.master_json_input)
             act = row_data.get('action')
             k = row_data.get('key', '').strip()
             
-            # Revert operasi jika parameternya adalah ADD NEW
+            # Revert operation if the parameter is ADD NEW
             if k and act == "ADD NEW":
                 body_key = "body" if ("body" in base.get("response", {}) and "jsonBody" not in base.get("response", {})) else "jsonBody"
                 if k.startswith("headers."):
@@ -230,20 +230,20 @@ def handle_delete_row(index, row_data):
     except:
         pass
     
-    # Hapus baris dari UI dan sinkronisasi ulang
+    # Remove the row from UI and re-sync
     remove_row(index)
     auto_sync()
 
 # ==========================================
-# BAGIAN 1: FORM UTAMA
+# PART 1: MAIN FORM
 # ==========================================
-st.subheader("1. Konfigurasi Master")
+st.subheader("1. Master Configuration")
 st.text_area(
-    "Template Master JSON (Edit langsung di sini, atau gunakan form di bawah untuk otomatisasi):", 
+    "Master JSON Template (Edit directly here, or use the form below for automation):", 
     height=250, 
     key="master_json_input"
 )
-filename_template = st.text_input("Pola Nama File:", placeholder="Contoh: mock_response_[code].json", value="mock_response_[code].json")
+filename_template = st.text_input("Filename Pattern:", placeholder="Example: mock_response_[code].json", value="mock_response_[code].json")
 
 parsed_root = {}
 available_keys = []
@@ -263,18 +263,17 @@ if st.session_state.master_json_input.strip():
         is_json_valid = True
     except json.JSONDecodeError:
         is_json_valid = False
-        # Pesan error ringan yang tidak memblokir tombol menggunakan st.toast
-        st.toast("⚠️ Format Master JSON tidak valid. Silakan periksa sintaks JSON Anda.", icon="❌")
+        st.toast("⚠️ Invalid Master JSON format. Please check your JSON syntax.", icon="❌")
 
 st.divider()
 
 # ==========================================
-# BAGIAN 2: PENGATURAN FIXED & PREVIEW
+# PART 2: FIXED SETTINGS & PREVIEW
 # ==========================================
 col_left, col_right = st.columns([1, 1])
 
 with col_left:
-    st.subheader("🛠️ Pengaturan Fixed (Req & Res)")
+    st.subheader("🛠️ Fixed Settings (Req & Res)")
     st.text_input("URL Path / Endpoint:", key="fixed_url", on_change=auto_sync)
     
     c_req1, c_req2 = st.columns(2)
@@ -283,10 +282,10 @@ with col_left:
         
     c_req3, c_req4 = st.columns(2)
     with c_req3: st.number_input("Fixed Delay (Milliseconds):", min_value=0, step=100, key="fixed_delay", on_change=auto_sync)
-    with c_req4: st.text_input("Matched JSON Path (Opsional):", key="fixed_matched", on_change=auto_sync)
+    with c_req4: st.text_input("Matched JSON Path (Optional):", key="fixed_matched", on_change=auto_sync)
 
 with col_right:
-    st.subheader("👁️ Live Preview Hasil")
+    st.subheader("👁️ Live Preview")
     compiled_preview = compile_final_json()
     if "error" in compiled_preview:
         st.warning(compiled_preview["error"])
@@ -294,11 +293,11 @@ with col_right:
         st.json(compiled_preview)
 
 # ==========================================
-# BAGIAN 3: MANIPULASI PARAMETER VARIASI
+# PART 3: JSON PARAMETER MANIPULATION
 # ==========================================
 st.divider()
-st.subheader("🔀 Manipulasi Parameter JSON (Variasi)")
-st.caption("Semua perubahan di form ini akan OTOMATIS tersinkronisasi menjadi Placeholder '{key}' di Master JSON.")
+st.subheader("🔀 JSON Parameter Manipulation (Variations)")
+st.caption("All changes in this form will be AUTOMATICALLY synchronized as a '{key}' Placeholder in the Master JSON.")
 
 for i, row in enumerate(st.session_state.rows):
     c1, c2, c3, c4 = st.columns([2, 3, 3, 1])
@@ -309,60 +308,59 @@ for i, row in enumerate(st.session_state.rows):
         action_options.append(current_act)
 
     with c1:
-        st.session_state.rows[i]['action'] = st.selectbox("Aksi / Target", action_options, index=action_options.index(current_act) if current_act in action_options else 0, key=f"act_{row['id']}", on_change=auto_sync)
+        st.session_state.rows[i]['action'] = st.selectbox("Action / Target", action_options, index=action_options.index(current_act) if current_act in action_options else 0, key=f"act_{row['id']}", on_change=auto_sync)
         
     with c2:
         is_existing_param = st.session_state.rows[i]['action'] not in ["ADD NEW", "REMOVE EXISTING"]
         
         if is_existing_param:
-            st.text_input("Key (Terkunci)", value=st.session_state.rows[i]['action'], disabled=True, key=f"key_disp_{row['id']}")
+            st.text_input("Key (Locked)", value=st.session_state.rows[i]['action'], disabled=True, key=f"key_disp_{row['id']}")
         else:
-            st.text_input("Nama Key", value=row['key'], key=f"key_input_{row['id']}", placeholder="e.g. systemData.gatewayNumber", on_change=auto_sync)
+            st.text_input("Key Name", value=row['key'], key=f"key_input_{row['id']}", placeholder="e.g. systemData.gatewayNumber", on_change=auto_sync)
             
     with c3:
         if st.session_state.rows[i]['action'] == "REMOVE EXISTING":
-            st.text_input("Value", value="- Akan Dihapus Secara Menyeluruh -", disabled=True, key=f"val_disp_{row['id']}")
+            st.text_input("Value", value="- Will Be Completely Removed -", disabled=True, key=f"val_disp_{row['id']}")
         else:
-            st.text_input("Isi Value Variasi", value=row['value'], key=f"val_input_{row['id']}", placeholder="Contoh: ValA, ValB", on_change=auto_sync)
+            st.text_input("Variation Value(s)", value=row['value'], key=f"val_input_{row['id']}", placeholder="Example: ValA, ValB", on_change=auto_sync)
             
     with c4:
         st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
-        # Tombol Hapus sekarang menggunakan callback anti-crash
-        st.button("🗑️ Hapus", key=f"del_{row['id']}", use_container_width=True, on_click=handle_delete_row, args=(i, row))
+        st.button("🗑️ Delete", key=f"del_{row['id']}", use_container_width=True, on_click=handle_delete_row, args=(i, row))
 
-if st.button("➕ Tambah Variasi Parameter"):
+if st.button("➕ Add Parameter Variation"):
     add_row()
     st.rerun()
 
 # ==========================================
-# BAGIAN 4: PEMBUATAN FILE ZIP DENGAN AI
+# PART 4: AI GENERATION & ZIP DOWNLOAD
 # ==========================================
 st.divider()
 
 if st.button("🚀 GENERATE MULTIPLE FILES (.ZIP)", type="primary", use_container_width=True, disabled=not is_json_valid):
     if not st.session_state.master_json_input.strip():
-        st.error("⚠️ Template JSON Utama tidak boleh kosong!")
+        st.error("⚠️ Master JSON Template cannot be empty!")
     elif not is_json_valid:
-        st.error("⚠️ Perbaiki dulu format Master JSON Anda sebelum melakukan Generate!")
+        st.error("⚠️ Please fix your Master JSON format before generating!")
     else:
-        with st.spinner("⏳ AutoMock.ai sedang menyusun struktur variasi file mock..."):
+        with st.spinner("⏳ AutoMock.ai is assembling the mock file variations structure..."):
             variations_text = ""
             for r in st.session_state.rows:
                 if r['key']:
                     leaf_key = r['key'].split('.')[-1]
                     if r['action'] == "REMOVE EXISTING":
-                        variations_text += f"- Pastikan parameter '{r['key']}' dihapus dari blueprint.\n"
+                        variations_text += f"- Ensure the parameter '{r['key']}' is removed from the blueprint.\n"
                     elif r['action'] == "ADD NEW":
-                        variations_text += f"- Ganti placeholder {{{leaf_key}}} pada '{r['key']}' dengan nilai: {r['value']}.\n"
+                        variations_text += f"- Replace the placeholder {{{leaf_key}}} in '{r['key']}' with the value: {r['value']}.\n"
                     else:
-                        variations_text += f"- Ganti placeholder {{{leaf_key}}} pada '{r['key']}' dengan nilai variasi: {r['value']}. (INSTRUKSI MUTLAK: Jika nilai berupa instruksi acak/random, patuhi 100% dan JANGAN menyisakan teks asli sebelumnya!).\n"
+                        variations_text += f"- Replace the placeholder {{{leaf_key}}} in '{r['key']}' with the variation value: {r['value']}. (ABSOLUTE INSTRUCTION: If the value is a random/generation instruction, follow it exactly and DO NOT leave the previous original text!).\n"
 
             base_structure = json.dumps(compiled_preview, indent=2)
 
             full_prompt = (
-                f"1) BLUEPRINT CETAKAN UTAMA (PERTAHANKAN STRUKTURNYA):\n{base_structure}\n\n"
-                f"2) POLA NAMA FILE:\n{filename_template}\n\n"
-                f"3) INSTRUKSI VARIASI DATA UNTUK SETIAP FILE:\n{variations_text}\n"
+                f"1) MAIN BLUEPRINT FORMAT (MAINTAIN THIS STRUCTURE):\n{base_structure}\n\n"
+                f"2) FILENAME PATTERN:\n{filename_template}\n\n"
+                f"3) DATA VARIATION INSTRUCTIONS FOR EACH FILE:\n{variations_text}\n"
             )
             
             success = False
@@ -373,7 +371,7 @@ if st.button("🚀 GENERATE MULTIPLE FILES (.ZIP)", type="primary", use_containe
                         model='gemini-3.1-flash-lite',
                         contents=full_prompt,
                         config=types.GenerateContentConfig(
-                            system_instruction="Anda adalah sistem pembuat berkas Mock API otomatis. Kembalikan data dalam bentuk JSON Array murni. Setiap item wajib memiliki 'filename' dan 'content'. Node 'content' WAJIB mengikuti BLUEPRINT CETAKAN UTAMA. Jangan tinggalkan tanda kurung kurawal (placeholder) pada hasil akhir. Jangan menambahkan tulisan apapun di luar JSON Array.",
+                            system_instruction="You are an automated Mock API file generator system. Return the data as a pure JSON Array. Each item MUST have a 'filename' and 'content' key. The 'content' node MUST strictly follow the MAIN BLUEPRINT FORMAT. Do not leave curly braces (placeholders) in the final result. Do not add any text outside the JSON Array.",
                             response_mime_type="application/json",
                             temperature=0.2
                         )
@@ -388,11 +386,11 @@ if st.button("🚀 GENERATE MULTIPLE FILES (.ZIP)", type="primary", use_containe
                             zf.writestr(fname, fcontent)
                     zip_buffer.seek(0)
                     
-                    st.success("✅ Seluruh berkas skenario variasi berhasil dibuat!")
+                    st.success("✅ All variation scenario files generated successfully!")
                     st.download_button(
-                        label="📥 DOWNLOAD HASIL (.ZIP)",
+                        label="📥 DOWNLOAD RESULTS (.ZIP)",
                         data=zip_buffer,
-                        file_name="AutoMock_Skenario_QA.zip",
+                        file_name="AutoMock_QA_Scenarios.zip",
                         mime="application/zip",
                         use_container_width=True
                     )
@@ -402,4 +400,4 @@ if st.button("🚀 GENERATE MULTIPLE FILES (.ZIP)", type="primary", use_containe
                     continue
             
             if not success:
-                st.error("❌ Terjadi kendala saat memproses generate berkas. Periksa validitas API Key atau instruksi AI Anda.")
+                st.error("❌ An error occurred while generating files. Please check your API Key validity or AI instructions.")
